@@ -40,6 +40,19 @@ If you don't already have a Foundry project and model deployment:
 azd provision
 ```
 
+> **Note (non-interactive/automated `azd provision --no-prompt`):** the interactive
+> `azd provision` flow prompts you to pick a model deployment and stores your choice
+> as the `AZURE_AI_MODEL_DEPLOYMENT_NAME` environment variable, which `azure.yaml`
+> forwards into the agent container. Running `azd provision --no-prompt` (e.g. in CI)
+> skips that prompt and leaves `AZURE_AI_MODEL_DEPLOYMENT_NAME` unset, so the deployed
+> agent fails at startup with `ValueError: Model is required`. For non-interactive
+> runs, set it explicitly to match the deployment name declared in `azure.yaml`
+> (`gpt-5-mini` by default) before running `azd deploy`:
+>
+> ```bash
+> azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-5-mini
+> ```
+
 ### Run the agent locally
 
 ```bash
