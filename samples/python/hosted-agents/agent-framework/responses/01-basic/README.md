@@ -72,6 +72,40 @@ For the full deployment guide, see [Deploy a hosted agent](https://learn.microso
 azd ai agent invoke "Hi"
 ```
 
+### Non-interactive (CI, service principal, or managed identity) deployment
+
+When `azd auth login`, `azd ai agent init`, `azd provision`, and `azd deploy`
+are run without an interactive terminal (for example `--no-prompt`, or under a
+service principal / managed identity), two extra steps are required that the
+interactive flow above handles for you automatically:
+
+1. **Auth check for non-user identities.** `azd`'s own `azd auth status` check
+   (used by the `azure.ai.agents` extension before `init`/`provision`/`deploy`)
+   does not recognize an `azd auth login --managed-identity` (or service
+   principal) session by default, and fails with `not logged in` even though
+   `az login` succeeded. Before running any `azd ai agent` command, set:
+
+   ```bash
+   azd config set auth.useAzCliAuth true
+   ```
+
+   This makes `azd` defer to the Azure CLI's login state, which correctly
+   recognizes managed identity / service principal sessions.
+
+2. **Model deployment name.** The interactive `azd ai agent init` prompts (or
+   the `--model` / `--model-deployment` flags) set the azd environment value
+   `AZURE_AI_MODEL_DEPLOYMENT_NAME`, which `main.py` requires at container
+   startup (`FoundryChatClient(..., model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"])`).
+   When initializing non-interactively without one of those flags, this value
+   is left empty, and the deployed agent will fail readiness with
+   `ValueError: Model is required...` (visible via
+   `azd ai agent monitor --type system`). Set it explicitly to match the model
+   deployment name declared in `azure.yaml` (`gpt-5-mini`) before `azd deploy`:
+
+   ```bash
+   azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-5-mini
+   ```
+
 ## Option 2: VS Code (Foundry Toolkit)
 
 ### Prerequisites
