@@ -111,6 +111,13 @@ azd ai agent run
 
 The agent starts on `http://localhost:8088`.
 
+For a headless terminal or when port `8088` is unavailable, skip opening the
+Agent Inspector and choose another free port:
+
+```bash
+azd ai agent run --no-client --port 8090
+```
+
 <details>
 <summary><h4>Using the Foundry Toolkit VS Code Extension</h4></summary>
 
@@ -164,6 +171,12 @@ The agent starts on `http://localhost:8088`.
 
 ```bash
 azd ai agent invoke --local "Search the web for Azure AI Foundry news"
+```
+
+When using a custom local port, pass the same port to the invoke command:
+
+```bash
+azd ai agent invoke --local --port 8090 "Search the web for Azure AI Foundry news"
 ```
 
 Or use `curl`:
