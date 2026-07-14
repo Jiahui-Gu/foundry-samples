@@ -46,7 +46,7 @@ azd ai agent invoke --local '{"threadId": "thread-1", "runId": "run-1", "state":
 
 **PowerShell:**
 ```powershell
-azd ai agent invoke --local '{\"threadId\": \"thread-1\", \"runId\": \"run-1\", \"state\": {}, \"messages\": [{\"id\": \"msg-1\", \"role\": \"user\", \"content\": \"Hello\"}], \"tools\": [], \"context\": [], \"forwardedProps\": {}}'
+azd ai agent invoke --local '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello"}], "tools": [], "context": [], "forwardedProps": {}}'
 ```
 
 Or invoke directly with curl:
