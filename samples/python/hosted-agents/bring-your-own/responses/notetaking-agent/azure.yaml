@@ -25,7 +25,7 @@ services:
         - Bring Your Own
         - Function Calling
         - Python
-    project: src/notetaking-agent-responses-python
+    project: src/agent
     language: python
     codeConfiguration:
       runtime: python_3_13
