@@ -63,7 +63,7 @@ services:
         - Responses Protocol
         - Streaming
         - Teams
-    project: src/agent-framework-agent-teams-activity
+    project: src/agent
     language: python
     codeConfiguration:
       runtime: python_3_13
