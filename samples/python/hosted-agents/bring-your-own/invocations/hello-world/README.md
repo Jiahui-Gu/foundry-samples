@@ -147,11 +147,24 @@ azd ai agent run
 > [!NOTE]
 > If you already have a Foundry project and model deployment, add `-p <project-id> -d <deployment-name>` to `azd ai agent init` to target existing resources. You can also skip provisioning entirely and configure env vars manually — see [Manual setup](#manual-setup).
 
-The agent starts on `http://localhost:8088/`. To invoke it:
+The agent starts on `http://localhost:8088/`. The Invocations protocol
+forwards the request body unchanged, so use the included [`request.json`](request.json)
+file to send the expected `input` object:
 
 ```bash
-azd ai agent invoke --local "What is Microsoft Foundry?"
+azd ai agent invoke --local --input-file request.json
 ```
+
+If port `8088` is already in use, start the agent on another free port and
+pass the same port when invoking it:
+
+```bash
+azd ai agent run --port 8089
+azd ai agent invoke --local --port 8089 --input-file request.json
+```
+
+Use the same custom port in the curl URL below if you invoke the agent
+directly.
 
 Or use curl directly. The `-N` flag disables output buffering so you see SSE tokens as they arrive:
 
@@ -162,12 +175,12 @@ Or use curl directly. The `-N` flag disables output buffering so you see SSE tok
 # Turn 1 — start a new conversation
 curl -sS -N -X POST "http://localhost:8088/invocations?agent_session_id=chat-001" \
   -H "Content-Type: application/json" \
-  -d '{"message": "What is Microsoft Foundry?"}'
+  -d '{"input": "What is Microsoft Foundry?"}'
 
 # Turn 2 — continue the same conversation
 curl -sS -N -X POST "http://localhost:8088/invocations?agent_session_id=chat-001" \
   -H "Content-Type: application/json" \
-  -d '{"message": "What hosted agent options does it offer?"}'
+  -d '{"input": "What hosted agent options does it offer?"}'
 ```
 
 Each response is a stream of SSE events: `token` events with incremental text, followed by a `done` event with the complete reply.
@@ -195,7 +208,7 @@ azd deploy
 After deploying, invoke the agent running in Foundry:
 
 ```bash
-azd ai agent invoke "What is Microsoft Foundry?"
+azd ai agent invoke --input-file request.json
 ```
 
 To stream logs from the running agent:

@@ -30,12 +30,12 @@ Usage::
     # Turn 1 — start a new conversation
     curl -sS -N -X POST "http://localhost:8088/invocations?agent_session_id=chat-001" \\
         -H "Content-Type: application/json" \\
-        -d '{"message": "What is Microsoft Foundry?"}'
+        -d '{"input": "What is Microsoft Foundry?"}'
 
     # Turn 2 — continue the same conversation
     curl -sS -N -X POST "http://localhost:8088/invocations?agent_session_id=chat-001" \\
         -H "Content-Type: application/json" \\
-        -d '{"message": "What hosted agent options does it offer?"}'
+        -d '{"input": "What hosted agent options does it offer?"}'
 """
 
 import json
@@ -106,31 +106,21 @@ _history: list[dict[str, str]] = []
 @app.invoke_handler
 async def handle_invoke(request: Request):
     """Handle a streaming multi-turn chat request."""
-    # Accept either a JSON object ({"message": "..."} or {"input": "..."}) or a
-    # plain-text body (e.g. sent directly from the Foundry portal chat UI).
     try:
         body = await request.body()
-        if not body:
-            raise ValueError("empty body")
-        try:
-            data = json.loads(body)
-        except json.JSONDecodeError:
-            user_message = body.decode("utf-8", errors="replace").strip()
-        else:
-            if isinstance(data, dict):
-                user_message = data.get("message") or data.get("input") or ""
-            else:
-                user_message = body.decode("utf-8", errors="replace").strip()
+        data = json.loads(body)
+        user_message = data.get("input") if isinstance(data, dict) else None
         if not isinstance(user_message, str) or not user_message.strip():
-            raise ValueError("missing message text")
-    except ValueError:
+            raise ValueError("missing input text")
+        user_message = user_message.strip()
+    except (json.JSONDecodeError, ValueError):
         return JSONResponse(
             status_code=400,
             content={
                 "error": "invalid_request",
                 "message": (
-                    'Request body must be a non-empty JSON object with a "message" (or "input") '
-                    'string, or a plain-text body, e.g. {"message": "What is Microsoft Foundry?"}'
+                    'Request body must be a JSON object with a non-empty "input" '
+                    'string, e.g. {"input": "What is Microsoft Foundry?"}'
                 ),
             },
         )
