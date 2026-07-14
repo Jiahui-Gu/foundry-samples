@@ -32,6 +32,24 @@ azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/m
 
 Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one.
 
+For a non-interactive deployment from an existing clone, create a uniquely
+named environment and set the values that the interactive prompts would
+normally collect:
+
+```bash
+cd samples/python/hosted-agents/agent-framework/responses/01-basic
+
+azd env new <unique-environment-name> --no-prompt
+azd env set AZURE_SUBSCRIPTION_ID <subscription-id>
+azd env set AZURE_LOCATION <azure-region>
+
+# Optional: deploy into a specific existing resource group.
+azd env set AZURE_RESOURCE_GROUP <resource-group-name>
+```
+
+Use a new environment name for each deployment. This prevents an automated run
+from updating resources associated with another `azd` environment.
+
 ### Provision Azure resources (if needed)
 
 If you don't already have a Foundry project and model deployment:
