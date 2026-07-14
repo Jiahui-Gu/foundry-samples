@@ -48,12 +48,24 @@ azd ai agent run
 
 The agent host will start on `http://localhost:8088`.
 
+If port `8088` is unavailable, start the agent on another port, for example:
+
+```bash
+azd ai agent run --port 18089
+```
+
 ### Invoke the local agent
 
 In a separate terminal, from the project directory:
 
 ```bash
 azd ai agent invoke --local "Hi"
+```
+
+When using another port, pass the same value to the invoke command:
+
+```bash
+azd ai agent invoke --local --port 18089 "Hi"
 ```
 
 ### Deploy to Foundry
