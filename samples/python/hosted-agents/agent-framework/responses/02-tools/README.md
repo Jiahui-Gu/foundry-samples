@@ -56,6 +56,13 @@ In a separate terminal, from the project directory:
 azd ai agent invoke --local "What is the weather in Seattle?"
 ```
 
+If port `8088` is already in use, choose another free port and pass it to both commands:
+
+```bash
+azd ai agent run --port 8089
+azd ai agent invoke --local --port 8089 "What is the weather in Seattle?"
+```
+
 ### Deploy to Foundry
 
 Once tested locally, deploy to Microsoft Foundry:
@@ -110,6 +117,12 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 3. On the **Basics** tab, choose deployment method (**Code** or **Container**) and confirm the agent name.
 4. On **Review + Deploy**, confirm runtime details, pick **CPU and Memory** size, and click **Deploy**.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
+
+## Troubleshooting
+
+### Windows reports a path is too long
+
+`azd ai agent run` creates a `.venv` below the service source directory. If Python reports `DLL load failed` because the filename or extension is too long, move or map the initialized project to a shorter path (for example, `C:\src\tools-agent`) and run it again.
 
 ## Next steps
 
