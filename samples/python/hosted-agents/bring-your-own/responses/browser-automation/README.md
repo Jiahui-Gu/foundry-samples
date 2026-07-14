@@ -68,6 +68,7 @@ User → Responses Protocol → Handler (main.py)
 - An Azure AI Foundry project with a deployed chat model (e.g., `gpt-4.1`).
 - A Foundry Toolbox with the `browser_automation_preview ` tool configured (backed by an Azure Playwright workspace).
 - Azure CLI installed and authenticated (`az login`).
+- Azure Developer CLI (`azd`) for local invocation and deployment.
 - Python 3.12+ for local development.
 
 ## Configuration
@@ -84,28 +85,66 @@ User → Responses Protocol → Handler (main.py)
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BROWSER_TIMEOUT_SECONDS` | `180` | Timeout for each playwright-cli command |
+| `PORT` | `8088` | Port used by the local agent server |
 
 ## Running Locally
 
+Run these commands from the `browser-automation` sample directory:
+
 ```bash
-# Set environment
+# Enter the service directory
+cd src/browser-automation-agent-sample-foundry
+```
+
+> [!NOTE]
+> On Windows, keep the checkout path short. If importing `_cffi_backend` fails
+> with "The filename or extension is too long", recreate `.venv` from a short
+> path. A temporary directory junction avoids moving the checkout:
+>
+> ```powershell
+> $shortPath = Join-Path $env:TEMP "browser-automation-agent"
+> New-Item -ItemType Junction -Path $shortPath -Target (Get-Location)
+> Set-Location $shortPath
+> ```
+
+Create an isolated Python environment and install dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+npm install -g @playwright/cli@latest
+```
+
+On Windows PowerShell, activate the environment with
+`.\.venv\Scripts\Activate.ps1`, then run the same install commands.
+
+Set the required environment variables (use a deployed model name from your
+Foundry project):
+
+```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
 export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1"
+# Optional: export PORT=9090
+```
 
-# Install dependencies
-pip install -r requirements.txt
-npm install -g @playwright/cli@latest
+```powershell
+$env:FOUNDRY_PROJECT_ENDPOINT = "https://<account>.services.ai.azure.com/api/projects/<project>"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME = "gpt-4.1"
+# Optional: $env:PORT = "9090"
+```
 
-# Run
-python src/main.py
+Start the agent:
+
+```bash
+python main.py
 ```
 
 ### Invoke the agent
 
 ```bash
-curl -sS -X POST http://localhost:8088/responses \
-    -H "Content-Type: application/json" \
-    -d '{"input": "Go to https://example.com and tell me the page title"}' | jq .
+azd ai agent invoke --local "Go to https://example.com and tell me the page title"
+# If you changed PORT, pass the same value: azd ai agent invoke --local --port 9090 "..."
 ```
 
 ### Test in VS Code (Foundry Toolkit)
