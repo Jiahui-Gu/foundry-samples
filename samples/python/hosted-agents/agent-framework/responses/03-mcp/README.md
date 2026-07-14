@@ -57,6 +57,28 @@ azd ai agent run
 
 The agent host will start on `http://localhost:8088`.
 
+#### Windows checkouts with long paths
+
+`azd ai agent run` creates a virtual environment under the agent service
+directory. In a deeply nested checkout, native Python packages can fail to
+load with `DLL load failed: The filename or extension is too long`. From the
+project directory, map the checkout to an unused drive letter before starting
+the agent:
+
+```powershell
+subst X: "$PWD"
+Set-Location X:\
+azd ai agent run
+```
+
+Use `X:\` as the project directory in the terminal that invokes the agent.
+After stopping the agent, remove the temporary mapping:
+
+```powershell
+Set-Location C:\
+subst X: /d
+```
+
 ### Invoke the local agent
 
 In a separate terminal, from the project directory:
