@@ -25,7 +25,7 @@ services:
         - Invocations Protocol
         - Bring Your Own
         - Python
-    project: src/hello-world-python-invocations-voicelive
+    project: src/agent
     language: python
     codeConfiguration:
       runtime: python_3_13

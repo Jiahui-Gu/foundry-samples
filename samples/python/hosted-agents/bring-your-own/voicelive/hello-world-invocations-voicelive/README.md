@@ -22,7 +22,7 @@ Once the agent is deployed, you can interact with the agent using voice through 
 
 The agent uses the Foundry SDK to create a Responses client from the project endpoint and model deployment name. When a request arrives, the handler looks up the session history by `session_id`, appends the new user message, calls the model via the Responses API with streaming, and returns a `StreamingResponse` of SSE events — `output_audio_transcription.delta` events during generation, an `output_audio_transcription.done` event with the full text, then a final `done` event.
 
-See [main.py](src/hello-world-python-invocations-voicelive/main.py) for the full implementation.
+See [main.py](src/agent/main.py) for the full implementation.
 
 ### Agent Hosting
 
@@ -53,7 +53,7 @@ Before running this sample, ensure you have:
 
 ### Environment Variables
 
-See [`.env.example`](src/hello-world-python-invocations-voicelive/.env.example) or `.env` for the full list of environment variables this sample uses.
+See [`.env.example`](src/agent/.env.example) or `.env` for the full list of environment variables this sample uses.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -132,10 +132,20 @@ The agent starts on `http://localhost:8088/`. To invoke it:
 azd ai agent invoke --local "What is Microsoft Foundry?"
 ```
 
+If port `8088` is already in use, choose another port and pass the same value
+when starting and invoking the agent:
+
+```bash
+azd ai agent run --port 8090
+# In another terminal
+azd ai agent invoke --local --port 8090 "What is Microsoft Foundry?"
+```
+
 Or use curl directly. The `-N` flag disables output buffering so you see SSE tokens as they arrive:
 
 > [!NOTE]
 > `agent_session_id` is optional. If omitted, the server auto-generates one and returns it in the `done` event (`session_id` field). To continue a conversation across turns, pass the same `agent_session_id` in each request.
+> If you started the agent on a custom port, replace `8088` below with that port.
 
 ```bash
 # Turn 1 — start a new conversation
