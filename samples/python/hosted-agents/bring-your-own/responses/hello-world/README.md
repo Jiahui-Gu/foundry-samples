@@ -152,6 +152,14 @@ The agent starts on `http://localhost:8088/`. To invoke it:
 azd ai agent invoke --local "What is Microsoft Foundry?"
 ```
 
+If port `8088` is already in use, choose another port and pass the same value
+to both commands:
+
+```bash
+azd ai agent run --port 9090
+azd ai agent invoke --local --port 9090 "What is Microsoft Foundry?"
+```
+
 Or use curl directly:
 
 ```bash
