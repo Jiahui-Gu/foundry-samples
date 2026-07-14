@@ -40,7 +40,12 @@ public class Program
         var deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME")
             ?? throw new InvalidOperationException("AZURE_AI_MODEL_DEPLOYMENT_NAME environment variable is not set.");
 
-        var credential = new DefaultAzureCredential();
+        var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
+        {
+            ExcludeManagedIdentityCredential =
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("IDENTITY_ENDPOINT")) &&
+                string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MSI_ENDPOINT"))
+        });
         var projectClient = new AIProjectClient(new Uri(foundryEndpoint), credential);
         var responsesClient = projectClient.ProjectOpenAIClient
             .GetProjectResponsesClientForModel(deployment);
