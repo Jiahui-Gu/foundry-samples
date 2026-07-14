@@ -67,7 +67,20 @@ azd ai agent run
 
 The agent host will start on `http://localhost:8088`.
 
-> This sample requires a Foundry Toolbox. The `TOOLBOX_NAME` environment variable is configured in `azure.yaml` and will be prompted during `azd ai agent init`.
+> This sample requires a Foundry Toolbox with the `code_interpreter` tool.
+> New projects use the `agent-tools` toolbox declared in `azure.yaml`.
+
+When reusing an existing Foundry project, point the sample at a toolbox that
+contains the `code_interpreter` tool. An explicit endpoint can select a
+specific toolbox version and takes precedence over `TOOLBOX_NAME`:
+
+```bash
+azd ai toolbox create <toolbox-name> --from-file ./toolbox.yaml
+azd env set TOOLBOX_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<name>/versions/<version>/mcp?api-version=v1"
+```
+
+Skip the create command when you already have a compatible toolbox. Use the
+endpoint returned by `azd ai toolbox create` or `azd ai toolbox show`.
 
 ### Invoke the local agent
 

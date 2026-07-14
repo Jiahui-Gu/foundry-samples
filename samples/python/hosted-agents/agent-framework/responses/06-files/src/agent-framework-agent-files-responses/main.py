@@ -15,6 +15,9 @@ load_dotenv()
 
 def resolve_toolbox_endpoint() -> str:
     """Resolve the toolbox MCP endpoint URL."""
+    if toolbox_endpoint := os.environ.get("TOOLBOX_ENDPOINT"):
+        return toolbox_endpoint
+
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"].rstrip("/")
     toolbox_name = os.environ["TOOLBOX_NAME"]
     return f"{project_endpoint}/toolboxes/{toolbox_name}/mcp?api-version=v1"
