@@ -20,19 +20,25 @@ Agents transfer control via handoff tools. Status updates stream in real-time as
 |----------|----------|-------------|
 | `FOUNDRY_PROJECT_ENDPOINT` | Yes | Foundry project endpoint (auto-injected in hosted containers) |
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name in the Foundry project |
+| `PORT` | No | Local HTTP port (defaults to `8088`) |
 
 #### Run Locally
 
 ```bash
+cd src/handoff-langgraph-responses-voicelive
 cp .env.example .env
 # Edit .env with your values
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+# Optional: choose another port before starting.
+# macOS/Linux: export PORT=8089
+# PowerShell: $env:PORT=8089
 python main.py
 ```
 
 #### Test
 
 ```bash
+# If you changed PORT, use the same port here.
 # Streaming
 curl -sS -N -X POST http://localhost:8088/responses \
     -H "Content-Type: application/json" \
