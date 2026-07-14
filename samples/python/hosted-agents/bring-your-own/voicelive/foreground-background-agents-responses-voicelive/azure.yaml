@@ -23,7 +23,7 @@ services:
         - Foreground + Background Agents
         - Voice Optimized
         - Responses Protocol
-    project: src/foreground-background-agents-voicelive
+    project: src/agent
     language: python
     codeConfiguration:
       runtime: python_3_13
