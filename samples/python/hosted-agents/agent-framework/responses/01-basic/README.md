@@ -4,18 +4,19 @@ A minimal [Agent Framework](https://github.com/microsoft/agent-framework) agent 
 
 ## How it works
 
-The agent uses `FoundryChatClient` from the Agent Framework and is served via `ResponsesHostServer`, which exposes a REST API compatible with the OpenAI Responses protocol. See [main.py](src/agent-framework-agent-basic-responses/main.py) for the implementation.
+The agent uses `FoundryChatClient` from the Agent Framework and is served via `ResponsesHostServer`, which exposes a REST API compatible with the OpenAI Responses protocol. See [main.py](src/basic-agent/main.py) for the implementation.
 
 ## Option 1: Azure Developer CLI (`azd`)
 
 ### Prerequisites
 
-1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd)
-2. Install the AI agent extension:
+1. A Foundry project with a model deployment and permission to use both.
+2. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd)
+3. Install the AI agent extension:
    ```bash
    azd ext install microsoft.foundry
    ```
-3. Authenticate:
+4. Authenticate:
    ```bash
    azd auth login
    ```
@@ -31,6 +32,17 @@ azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/m
 ```
 
 Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one.
+
+### Configure an existing clone
+
+If you cloned this repository instead of using `azd ai agent init`, create a local azd environment and configure the existing Foundry project and model deployment:
+
+```bash
+azd env new <environment-name> --subscription <subscription-id> --location <project-location>
+azd env set AZURE_AI_PROJECT_ENDPOINT <project-endpoint> --environment <environment-name>
+azd env set FOUNDRY_PROJECT_ENDPOINT <project-endpoint> --environment <environment-name>
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME <model-deployment-name> --environment <environment-name>
+```
 
 ### Provision Azure resources (if needed)
 
@@ -48,12 +60,24 @@ azd ai agent run
 
 The agent host will start on `http://localhost:8088`.
 
+If port 8088 is already in use, select another local port. Pass the environment explicitly when your shell has a different `AZURE_ENV_NAME`:
+
+```bash
+azd ai agent run --environment <environment-name> --port <port>
+```
+
 ### Invoke the local agent
 
 In a separate terminal, from the project directory:
 
 ```bash
 azd ai agent invoke --local "Hi"
+```
+
+When the agent is running on a custom port, pass the same port to the invocation:
+
+```bash
+azd ai agent invoke --environment <environment-name> --local --port <port> "Hi"
 ```
 
 ### Deploy to Foundry
