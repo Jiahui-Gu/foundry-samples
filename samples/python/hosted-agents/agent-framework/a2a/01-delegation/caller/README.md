@@ -16,6 +16,14 @@ The agent uses `FoundryChatClient` for the model (Responses API on the project e
 
 Follow [Running the Agent Host Locally](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/README.md#running-the-agent-host-locally). The toolbox / A2A connection lives in Foundry, so a local run still talks to the same remote executor.
 
+> [!IMPORTANT]
+> On Windows, clone the repository into a short path such as
+> `C:\src\foundry-samples`. `azd ai agent run` creates a virtual environment
+> below this deeply nested sample directory, and a long checkout path can make
+> native dependency paths exceed the Windows loader limit. If startup fails
+> with `ImportError: DLL load failed` and reports that the filename or extension
+> is too long, use a fresh clone at a shorter path before running again.
+
 ```bash
 azd ai agent invoke --local "What is 15 multiplied by 23?"
 ```
