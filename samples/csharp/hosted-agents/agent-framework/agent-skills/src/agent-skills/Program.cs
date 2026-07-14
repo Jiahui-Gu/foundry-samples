@@ -41,6 +41,8 @@
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using Azure.AI.AgentServer.Core;
+using Azure.AI.AgentServer.Responses;
+using Azure.AI.AgentServer.Responses.Models;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
@@ -78,7 +80,12 @@ foreach (string name in requestedSkills)
     }
 }
 
-var credential = new DefaultAzureCredential();
+bool isHosted = FoundryEnvironment.IsHosted;
+var credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
+{
+    ExcludeManagedIdentityCredential = !isHosted,
+    ExcludeWorkloadIdentityCredential = !isHosted,
+});
 var projectClient = new AIProjectClient(projectEndpoint, credential);
 
 AgentSkillsProvider? skillsProvider = null;
@@ -122,20 +129,30 @@ if (requestedSkills.Length > 0)
     skillsProvider = new AgentSkillsProvider(downloadedSkillsDir);
 }
 
-ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
-{
-    Name = "agent-skills",
-    Description = "Customer-support agent that loads tone and escalation policy from Foundry Skills.",
-    ChatOptions = new ChatOptions
+AIAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
     {
-        ModelId = deployment,
-        Instructions = "You are a customer-support assistant for Contoso Outdoors.",
-    },
-    AIContextProviders = skillsProvider is null ? [] : [skillsProvider],
-});
+        Name = "agent-skills",
+        Description = "Customer-support agent that loads tone and escalation policy from Foundry Skills.",
+        ChatOptions = new ChatOptions
+        {
+            ModelId = deployment,
+            Instructions = "You are a customer-support assistant for Contoso Outdoors.",
+        },
+        AIContextProviders = skillsProvider is null ? [] : [skillsProvider],
+    })
+    .AsBuilder()
+    .UseToolApproval(new ToolApprovalAgentOptions
+    {
+        AutoApprovalRules = [AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule],
+    })
+    .Build();
 
 var builder = AgentHost.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
+if (!isHosted)
+{
+    builder.Services.AddSingleton<HostedSessionIsolationKeyProvider, LocalSessionIsolationKeyProvider>();
+}
 builder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
 
 var app = builder.Build();
@@ -221,6 +238,15 @@ static string[] ParseSkillNames(string value) =>
     value.Length == 0
         ? []
         : value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+internal sealed class LocalSessionIsolationKeyProvider : HostedSessionIsolationKeyProvider
+{
+    public override ValueTask<HostedSessionContext?> GetKeysAsync(
+        ResponseContext context,
+        CreateResponse request,
+        CancellationToken cancellationToken)
+        => new(new HostedSessionContext("local-development"));
+}
 
 // Pipeline policy that adds the Foundry-Features opt-in header on every request.
 // Required for Skills (and other preview surfaces) until the SDK injects it automatically.
