@@ -37,20 +37,31 @@ and Azure OpenAI, hosted via the **invocations** protocol.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `FOUNDRY_PROJECT_ENDPOINT` | Yes | — | Foundry project endpoint URL |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | — | Model deployment name declared in `azure.yaml` |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | — | Compatible chat model deployment in the configured Foundry project |
 
 ## Option 1: Azure Developer CLI (`azd`)
+
+### Configure the local environment
+
+Local runs use an existing Foundry project and model deployment. Create a
+target-specific `azd` environment and configure both required values:
+
+```bash
+azd env new <environment-name> --subscription <subscription-id> --location <location>
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>" --environment <environment-name>
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<deployment-name>" --environment <environment-name>
+```
 
 ### Run the agent locally
 
 ```bash
-azd ai agent run
+azd ai agent run --environment <environment-name>
 ```
 
 ### Invoke the local agent
 
 ```bash
-azd ai agent invoke --local '{"message": "What time is it right now?"}'
+azd ai agent invoke --environment <environment-name> --local --protocol invocations '{"message": "What time is it right now?"}'
 ```
 
 Or invoke directly with curl (multi-turn):
@@ -82,7 +93,7 @@ azd deploy
 ### Invoke the deployed agent
 
 ```bash
-azd ai agent invoke '{"message": "What time is it right now?"}'
+azd ai agent invoke --protocol invocations '{"message": "What time is it right now?"}'
 ```
 
 To stream logs from the running agent:
