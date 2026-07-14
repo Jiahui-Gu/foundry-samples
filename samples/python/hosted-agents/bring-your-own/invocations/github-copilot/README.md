@@ -87,7 +87,7 @@ azd ai agent invoke --local '{"input": "What can you help me with?"}'
 
 **PowerShell:**
 ```powershell
-azd ai agent invoke --local '{\"input\": \"What can you help me with?\"}'
+azd ai agent invoke --local '{"input": "What can you help me with?"}'
 ```
 
 Or invoke directly with curl:
