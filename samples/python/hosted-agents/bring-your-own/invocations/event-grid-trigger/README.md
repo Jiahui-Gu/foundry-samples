@@ -67,6 +67,101 @@ $FOUNDRY_ACCOUNT_NAME = "<your-foundry-account-name>"
 $FOUNDRY_PROJECT_NAME = "<your-foundry-project-name>"
 ```
 
+## Run locally
+
+The local server uses an existing Foundry project and model deployment, but it
+does not provision or deploy the hosted agent. Run these commands from this
+sample's directory. Create a dedicated `azd` environment so values from another
+sample are not injected into the process.
+
+PowerShell:
+
+```powershell
+$AZD_ENV = "<local-environment-name>"
+$PROJECT_ENDPOINT = "https://<foundry-account>.services.ai.azure.com/api/projects/<foundry-project>"
+$MODEL_DEPLOYMENT = "<model-deployment-name>"
+
+# Keep the Python environment path short enough for Windows DLL loading. Choose
+# an unused drive letter, and leave this terminal open through the local run.
+$LOCAL_DRIVE = "R:"
+subst $LOCAL_DRIVE (Get-Location).Path
+Set-Location "$LOCAL_DRIVE\"
+
+azd env new $AZD_ENV --subscription "<subscription-id>" --no-prompt
+azd env set FOUNDRY_PROJECT_ENDPOINT $PROJECT_ENDPOINT -e $AZD_ENV
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME $MODEL_DEPLOYMENT -e $AZD_ENV
+azd env set AZURE_STORAGE_ACCOUNT_NAME $AZURE_STORAGE_ACCOUNT_NAME -e $AZD_ENV
+azd env set AZURE_STORAGE_SUMMARY_CONTAINER_NAME $SUMMARY_CONTAINER -e $AZD_ENV
+
+python -m venv src/event-grid-trigger-python-invocations/.venv
+& src/event-grid-trigger-python-invocations/.venv/Scripts/Activate.ps1
+python -m pip install uv
+azd ai agent run --no-inspector -e $AZD_ENV
+```
+
+Bash:
+
+```bash
+AZD_ENV="<local-environment-name>"
+PROJECT_ENDPOINT="https://<foundry-account>.services.ai.azure.com/api/projects/<foundry-project>"
+MODEL_DEPLOYMENT="<model-deployment-name>"
+
+azd env new "$AZD_ENV" --subscription "<subscription-id>" --no-prompt
+azd env set FOUNDRY_PROJECT_ENDPOINT "$PROJECT_ENDPOINT" -e "$AZD_ENV"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "$MODEL_DEPLOYMENT" -e "$AZD_ENV"
+azd env set AZURE_STORAGE_ACCOUNT_NAME "$AZURE_STORAGE_ACCOUNT_NAME" -e "$AZD_ENV"
+azd env set AZURE_STORAGE_SUMMARY_CONTAINER_NAME "$SUMMARY_CONTAINER" -e "$AZD_ENV"
+
+python -m venv src/event-grid-trigger-python-invocations/.venv
+source src/event-grid-trigger-python-invocations/.venv/bin/activate
+python -m pip install uv
+azd ai agent run --no-inspector -e "$AZD_ENV"
+```
+
+Wait until `azd` reports that the agent is ready on
+`http://localhost:8088`. In a second terminal, create a representative Event
+Grid subscription-validation request and invoke the local Invocations endpoint:
+
+PowerShell:
+
+```powershell
+$AZD_ENV = "<same-local-environment-name>"
+$validationEvent = @'
+[{"eventType":"Microsoft.EventGrid.SubscriptionValidationEvent","data":{"validationCode":"local-validation-code"}}]
+'@
+$validationEvent | Set-Content local-validation-event.json -Encoding ascii
+azd ai agent invoke --local --protocol invocations `
+  --input-file local-validation-event.json -e $AZD_ENV
+```
+
+Bash:
+
+```bash
+AZD_ENV="<same-local-environment-name>"
+printf '%s' '[{"eventType":"Microsoft.EventGrid.SubscriptionValidationEvent","data":{"validationCode":"local-validation-code"}}]' > local-validation-event.json
+azd ai agent invoke --local --protocol invocations \
+  --input-file local-validation-event.json -e "$AZD_ENV"
+```
+
+The response should contain:
+
+```json
+{"validationResponse":"local-validation-code"}
+```
+
+Stop the local server with `Ctrl+C`, then remove
+`local-validation-event.json`. On Windows, leave the mapped drive and remove it
+after the server stops:
+
+```powershell
+Set-Location $env:TEMP
+subst $LOCAL_DRIVE /d
+```
+
+To process a blob instead of testing the Event Grid handshake, upload a `.txt`
+or `.md` file to the input container and invoke with
+`{"container":"<input-container>","name":"<blob-name>"}`.
+
 ## 1. Deploy the agent
 
 [azure.yaml](azure.yaml) declares two environment variables and binds each value to an `${...}` placeholder that `azd` resolves from the **azd environment** at deploy time (your shell's `export` / `$env:` values are not propagated to the deployed agent). Set them once with `azd env set` before deploying:
