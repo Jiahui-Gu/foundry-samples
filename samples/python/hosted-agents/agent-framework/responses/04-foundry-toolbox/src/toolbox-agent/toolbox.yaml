@@ -1,6 +1,6 @@
 # toolbox.yaml
 # Defines the toolbox this agent consumes. Create it once with:
-#   azd ai toolbox create agent-tools --from-file ./toolbox.yaml
+#   azd ai toolbox create agent-tools --from-file ./src/toolbox-agent/toolbox.yaml
 # After creating it, copy the versioned MCP endpoint the command prints and
 # set it as the TOOLBOX_ENDPOINT environment variable. The agent connects to
 # that endpoint at runtime.
@@ -23,7 +23,7 @@ tools:
     project_connection_id: ghmcppat # use `ghmcpoauth` for OAuth2 authentication
     require_approval: "never"
   - type: mcp
-    # This MCP tool uses the Azure Language MCP server with agent identity for authentication
+    # The README documents agent identity and a key-based local fallback for Azure Language
     server_label: language-mcp
     project_connection_id: langmcpconn
     require_approval: "never"
