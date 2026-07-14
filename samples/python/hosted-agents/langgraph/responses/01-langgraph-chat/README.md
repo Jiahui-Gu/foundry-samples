@@ -150,3 +150,36 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 3. On the **Basics** tab, choose deployment method (**Code** or **Container**) and confirm the agent name.
 4. On **Review + Deploy**, confirm runtime details, pick **CPU and Memory** size, and click **Deploy**.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
+
+## Troubleshooting
+
+### Dependency installation fails in a long Windows path
+
+`azd ai agent run` creates `.venv` under the agent source directory. If `uv`
+reports `Failed to persist temporary file` or `The system cannot find the path
+specified`, the generated dependency path may exceed the Windows path limit.
+
+From the sample root, map the sample to an unused drive letter and run both
+local commands from the shorter path:
+
+```powershell
+$samplePath = (Resolve-Path .).Path
+subst.exe S: $samplePath
+Set-Location S:\
+
+azd ai agent run
+```
+
+In the second terminal:
+
+```powershell
+Set-Location S:\
+azd ai agent invoke --local "What time is it right now?"
+```
+
+After stopping the agent, remove the temporary drive mapping:
+
+```powershell
+Set-Location $samplePath
+subst.exe S: /d
+```
