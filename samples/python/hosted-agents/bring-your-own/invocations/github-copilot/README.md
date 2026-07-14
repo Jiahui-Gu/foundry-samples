@@ -57,11 +57,18 @@ This agent supports two LLM backends. Configure one of the following:
 
 ### Set up the GitHub token
 
-Create a local `.env` file from the sample template and set `GITHUB_TOKEN`:
+Create a local `.env` file in the agent service directory and set `GITHUB_TOKEN`:
 
+**Bash:**
 ```bash
-cp .env.example .env  # skip if .env already exists
-# Edit .env and set GITHUB_TOKEN=github_pat_...
+cp src/github-copilot-invocations/.env.example src/github-copilot-invocations/.env
+# Edit src/github-copilot-invocations/.env and set GITHUB_TOKEN=github_pat_...
+```
+
+**PowerShell:**
+```powershell
+Copy-Item src/github-copilot-invocations/.env.example src/github-copilot-invocations/.env
+# Edit src/github-copilot-invocations/.env and set GITHUB_TOKEN=github_pat_...
 ```
 
 The sample loads `.env` automatically when running locally. If you plan to deploy with `azd`, also add the token to your azd environment so it can be injected into the hosted agent:
@@ -78,6 +85,12 @@ azd ai agent run
 
 The agent starts on `http://localhost:8088/`.
 
+If port 8088 is already in use, choose another available port:
+
+```bash
+azd ai agent run --port 18089
+```
+
 ### Invoke the local agent
 
 **Bash:**
@@ -87,7 +100,13 @@ azd ai agent invoke --local '{"input": "What can you help me with?"}'
 
 **PowerShell:**
 ```powershell
-azd ai agent invoke --local '{\"input\": \"What can you help me with?\"}'
+azd ai agent invoke --local '{"input": "What can you help me with?"}'
+```
+
+If you started the agent on a custom port, pass the same port when invoking:
+
+```bash
+azd ai agent invoke --local --port 18089 '{"input": "What can you help me with?"}'
 ```
 
 Or invoke directly with curl:
@@ -127,7 +146,7 @@ azd ai agent invoke '{"input": "What can you help me with?"}'
 
 **PowerShell:**
 ```powershell
-azd ai agent invoke '{\"input\": \"What can you help me with?\"}'
+azd ai agent invoke '{"input": "What can you help me with?"}'
 ```
 
 To stream logs from the running agent:
