@@ -40,12 +40,25 @@ GET http://localhost:8088/invocations/docs/openapi.json
 
 - Python 3.10+
 - Azure CLI installed and authenticated (`az login`)
-- Azure OpenAI resource with a deployed model
+- Microsoft Foundry project with a deployed model
+- The Foundry project endpoint and model deployment name
+
+### Configure the local environment
+
+Create a dedicated `azd` environment and configure the Foundry project used by
+the locally running agent. If you already have an environment with these
+values, use its name instead.
+
+```bash
+azd env new <environment-name>
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>" --environment <environment-name>
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<model-deployment-name>" --environment <environment-name>
+```
 
 ### Run the agent locally
 
 ```bash
-azd ai agent run
+azd ai agent run --environment <environment-name>
 ```
 
 The agent starts on `http://localhost:8088/`.
@@ -54,7 +67,7 @@ The agent starts on `http://localhost:8088/`.
 
 **Bash:**
 ```bash
-azd ai agent invoke --local '{"task": "Write a product launch announcement for Azure AI Foundry"}'
+azd ai agent invoke --local --environment <environment-name> '{"task": "Write a product launch announcement for Azure AI Foundry"}'
 ```
 
 Or drive the full multi-step approval flow with curl:
