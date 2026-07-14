@@ -112,10 +112,33 @@ azd ai agent invoke "What time is it right now?"
 
 1. **VS Code** with the **[Foundry Toolkit](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio)** extension installed.
 2. For debugging Python in VS Code, install the **[Python](https://marketplace.visualstudio.com/items?itemName=ms-python.python)** extension pack.
+3. **Python 3.10 or later**.
+4. For local model calls, an existing Foundry project with a deployed model and an authenticated **Azure CLI** (`az login`).
 
 ### Set up the Python virtual environment
 
-- Open the Command Palette (`Ctrl+Shift+P`) and run **Python: Create Environment...** to create a virtual environment in the workspace (or **Python: Select Interpreter** to use an existing one).
+From the sample root, create and activate a virtual environment. On Windows, keep the environment at a short path to avoid `[WinError 206]` when the repository has a deeply nested checkout:
+
+```powershell
+# Windows PowerShell
+$venvPath = Join-Path $env:LOCALAPPDATA "venvs\langgraph-chat-responses"
+python -m venv $venvPath
+& "$venvPath\Scripts\Activate.ps1"
+```
+
+```bash
+# macOS/Linux
+python -m venv .venv
+source .venv/bin/activate
+```
+
+Change to the service source directory, which contains `requirements.txt`, `.env.example`, and `main.py`:
+
+```bash
+cd src/langgraph-chat-responses
+```
+
+- In VS Code, select the environment with **Python: Select Interpreter**.
 - Ensure `pip` is version 26.1 or newer (check with `pip --version`). Older versions fail to resolve this sample's dependencies. Upgrade if needed:
 
   ```bash
@@ -126,12 +149,31 @@ azd ai agent invoke "What time is it right now?"
 
   ```bash
   # use uv to accelerate
-  pip install uv
+  python -m pip install uv
   uv pip install --prerelease=allow -r requirements.txt
 
   # or pure pip
-  pip install -r requirements.txt
+  python -m pip install -r requirements.txt
   ```
+
+Create `.env` from the included template:
+
+```powershell
+# Windows PowerShell
+Copy-Item .env.example .env
+```
+
+```bash
+# macOS/Linux
+cp .env.example .env
+```
+
+Set both values in `.env`:
+
+```dotenv
+FOUNDRY_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
+AZURE_AI_MODEL_DEPLOYMENT_NAME=<model-deployment-name>
+```
 
 ### Run and debug the agent
 
@@ -139,9 +181,22 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 
 ### Or run manually, then open the Inspector
 
-1. Set the required environment variables and sign in to Azure with the Azure CLI (`az login`).
-2. Start the agent: `python main.py` (listens on `http://localhost:8088`).
-3. Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
+1. Sign in to Azure with the Azure CLI (`az login`).
+2. Start the agent with `python main.py`. It listens on `http://localhost:8088` by default. If that port is unavailable, set `PORT` to a free port before starting:
+
+   ```powershell
+   $env:PORT = "8089"
+   python main.py
+   ```
+
+3. Wait until the startup log reports that the server is running, then invoke it from another terminal using the same port:
+
+   ```powershell
+   $port = "8089" # Use 8088 when PORT was not overridden.
+   (Invoke-WebRequest -Uri "http://localhost:$port/responses" -Method POST -ContentType "application/json" -Body '{"input": "What time is it right now?"}').Content
+   ```
+
+4. Optionally, open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
 
 ### Deploy to Foundry
 
