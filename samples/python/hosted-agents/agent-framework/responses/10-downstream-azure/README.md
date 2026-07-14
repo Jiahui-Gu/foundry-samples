@@ -128,25 +128,76 @@ az role assignment create `
 
 Role assignments take a minute or two to propagate.
 
-## Running the Agent Host
+## Running the Agent Host Locally
 
-In addition to the standard environment variables described in the [parent README](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/README.md), this sample requires the following:
+Local runs use your developer identity and an existing Foundry project, model
+deployment, Storage container, and Service Bus queue. No provisioning or agent
+deployment is required.
+
+On Windows, use a short checkout path such as
+`C:\src\foundry-samples`. The local runner creates `.venv` under the deeply
+nested service directory, and dependency installation or native module loading
+can fail when that path reaches the Windows path-length limit. If moving the
+checkout is not practical, map the repository root to an unused drive letter
+before continuing:
+
+```powershell
+$RepoRoot = git rev-parse --show-toplevel
+subst R: $RepoRoot
+cd R:\samples\python\hosted-agents\agent-framework\responses\10-downstream-azure
+```
+
+Create a dedicated `azd` environment and set all required values:
 
 ```bash
-export AZURE_STORAGE_ACCOUNT_NAME="<storage-account-name>"
-export AZURE_STORAGE_CONTAINER_NAME="<container-name>"
-export AZURE_SERVICEBUS_FQDN="<namespace>.servicebus.windows.net"
-export AZURE_SERVICEBUS_QUEUE_NAME="<queue-name>"
+azd env new <environment-name>
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<model-deployment-name>"
+azd env set AZURE_STORAGE_ACCOUNT_NAME "<storage-account-name>"
+azd env set AZURE_STORAGE_CONTAINER_NAME "<container-name>"
+azd env set AZURE_SERVICEBUS_FQDN "<namespace>.servicebus.windows.net"
+azd env set AZURE_SERVICEBUS_QUEUE_NAME "<queue-name>"
+```
+
+Prepare the virtual environment in the service directory:
+
+```bash
+cd src/agent-framework-agent-downstream-azure-responses
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install uv
+cd ../..
 ```
 
 ```powershell
-$env:AZURE_STORAGE_ACCOUNT_NAME="<storage-account-name>"
-$env:AZURE_STORAGE_CONTAINER_NAME="<container-name>"
-$env:AZURE_SERVICEBUS_FQDN="<namespace>.servicebus.windows.net"
-$env:AZURE_SERVICEBUS_QUEUE_NAME="<queue-name>"
+cd src\agent-framework-agent-downstream-azure-responses
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install uv
+cd ..\..
 ```
 
-Follow the instructions in the [Running the Agent Host Locally](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
+Start the local agent:
+
+```bash
+azd ai agent run
+```
+
+The agent listens on `http://localhost:8088`. If that port is already in use,
+choose another port and pass the same value to both commands:
+
+```bash
+azd ai agent run --port 9090
+azd ai agent invoke --local --port 9090 "Hello!"
+```
+
+After stopping the agent, remove the temporary Windows drive mapping if you
+created one:
+
+```powershell
+cd C:\
+subst R: /D
+```
 
 ## Interacting with the agent
 
@@ -155,15 +206,15 @@ Follow the instructions in the [Running the Agent Host Locally](https://github.c
 **Blob Storage — write and read back:**
 
 ```powershell
-azd ai agent invoke 'Upload a blob named hello.txt with the content "hi from the agent".'
-azd ai agent invoke 'Read the blob hello.txt and tell me what it contains.'
+azd ai agent invoke --local 'Upload a blob named hello.txt with the content "hi from the agent".'
+azd ai agent invoke --local 'Read the blob hello.txt and tell me what it contains.'
 ```
 
 **Service Bus — send and peek:**
 
 ```powershell
-azd ai agent invoke 'Send a Service Bus message with the body {"orderId": 42}.'
-azd ai agent invoke 'Peek the next message on the queue.'
+azd ai agent invoke --local 'Send a Service Bus message with the body {"orderId": 42}.'
+azd ai agent invoke --local 'Peek the next message on the queue.'
 ```
 
 Or hit the local endpoint directly:
