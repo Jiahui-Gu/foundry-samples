@@ -165,3 +165,32 @@ Set `GITHUB_PAT` in `.env` (see [.env.example](src/langgraph-mcp-responses/.env.
 ## Targeting a different MCP server
 
 Set `MCP_SERVER_URL` to any HTTP-transport MCP endpoint and adjust `GITHUB_PAT` (or the `Authorization` header logic in [main.py](src/langgraph-mcp-responses/main.py)) to match its auth scheme.
+
+## Troubleshooting
+
+### Port 8088 is already in use
+
+Choose another free port and use it consistently for both startup and invocation. For example, with `azd`, start the agent on port 18088:
+
+```bash
+azd ai agent run --port 18088
+```
+
+Then invoke it from another terminal:
+
+```bash
+azd ai agent invoke --local --port 18088 "List my 5 most recently updated GitHub repos."
+```
+
+When running the agent directly with Python, set `PORT` before startup:
+
+```powershell
+$env:PORT=18088
+python main.py
+```
+
+Then send the request to the same port:
+
+```powershell
+(Invoke-WebRequest -Uri http://localhost:18088/responses -Method POST -ContentType "application/json" -Body '{"input": "List my 5 most recently updated GitHub repos."}').Content
+```
