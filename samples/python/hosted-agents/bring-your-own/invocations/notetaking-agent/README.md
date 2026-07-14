@@ -27,6 +27,16 @@ A note-taking agent built with `azure-ai-agentserver-invocations` and Azure Open
 
 ### Run the agent locally
 
+On Windows, if the repository is in a deeply nested directory, map this sample
+folder to an unused drive letter before running. This keeps the service-local
+virtual environment created by `azd` below the Windows path-length limit:
+
+```powershell
+$SampleRoot = (Get-Location).Path
+subst N: $SampleRoot
+Set-Location N:\
+```
+
 ```bash
 azd ai agent run
 ```
@@ -35,6 +45,14 @@ azd ai agent run
 
 ```bash
 azd ai agent invoke --local '{"message": "save a note - book reservation for dinner"}'
+```
+
+After stopping the agent with `Ctrl+C`, remove the temporary Windows drive
+mapping:
+
+```powershell
+Set-Location $SampleRoot
+subst N: /d
 ```
 
 Or invoke directly with curl:
