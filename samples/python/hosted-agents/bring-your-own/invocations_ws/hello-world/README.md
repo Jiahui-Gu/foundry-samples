@@ -73,7 +73,7 @@ shuttle audio bytes and control events.
 ## Running locally
 
 ```bash
-cd samples/python/hosted-agents/bring-your-own/invocations_ws/hello-world
+cd samples/python/hosted-agents/bring-your-own/invocations_ws/hello-world/src/hello-world
 
 python -m venv .venv
 source .venv/bin/activate
@@ -92,7 +92,7 @@ python main.py
 In a second terminal:
 
 ```bash
-cd samples/python/hosted-agents/bring-your-own/invocations_ws/hello-world
+cd samples/python/hosted-agents/bring-your-own/invocations_ws/hello-world/src/hello-world
 source .venv/bin/activate
 pip install -r requirements-dev.txt   # one-time: installs `websockets`
 python e2e_local.py
