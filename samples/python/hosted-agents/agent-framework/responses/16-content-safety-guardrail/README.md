@@ -4,18 +4,20 @@ An [Agent Framework](https://github.com/microsoft/agent-framework) agent hosted 
 
 ## How it works
 
-The agent itself is the basic `FoundryChatClient` agent served via `ResponsesHostServer` — see [main.py](src/agent-framework-content-safety-guardrail/main.py). The guardrail is **not** code; it's a definition-level setting. The agent declares a `policies` list with a `rai_policy` entry that points to an RAI policy by its full Azure Resource Manager (ARM) resource ID:
+The agent itself is the basic `FoundryChatClient` agent served via `ResponsesHostServer` — see [main.py](src/agent-framework-content-safety-guardrail/main.py). The guardrail is **not** code; it's a definition-level setting. The agent declares a `policies` list with an `rai_policy` entry that points to an RAI policy by its full Azure Resource Manager (ARM) resource ID:
 
 ```yaml
 policies:
   - type: rai_policy
-    rai_policy_name: /subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<account>/raiPolicies/<policy-name>
+    raiPolicyName: /subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<account>/raiPolicies/<policy-name>
 ```
 
-The platform applies that policy to the agent at runtime. When you omit the `policies` block, the agent deploys without a content safety guardrail. When you include the `policies` block but omit `rai_policy_name`, the platform applies the default policy, `Microsoft.DefaultV2`. For a conceptual overview, see [Add a content safety guardrail to a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/add-hosted-agent-guardrails).
+The platform applies that policy to the agent at runtime. When you omit the `policies` block, the agent deploys without a content safety guardrail. When you include the `policies` block but omit `raiPolicyName`, the platform applies the default policy, `Microsoft.DefaultV2`. For a conceptual overview, see [Add a content safety guardrail to a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/add-hosted-agent-guardrails).
 
 ## Prerequisites
 
+1. An existing Foundry project with a deployed chat model for local testing.
+1. Python 3.10 or later.
 1. An RAI policy created on your Foundry resource, and its full ARM resource ID. To create one, see [Configure guardrails and controls](https://learn.microsoft.com/en-us/azure/foundry/guardrails/how-to-create-guardrails). The ARM resource ID has this form:
 
    ```text
@@ -25,13 +27,13 @@ The platform applies that policy to the agent at runtime. When you omit the `pol
 1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd), then install the AI agent extension and authenticate:
 
    ```bash
-   azd ext install azure.ai.agents
+   azd ext install microsoft.foundry
    azd auth login
    ```
 
 ## Configure the guardrail
 
-Set `rai_policy_name` to your RAI policy's full ARM resource ID in [azure.yaml](azure.yaml). Use the full ARM resource ID, not the bare policy name.
+Set `raiPolicyName` to your RAI policy's full ARM resource ID in [azure.yaml](azure.yaml). Use the full ARM resource ID, not the bare policy name.
 
 ## Option 1: Azure Developer CLI (`azd`)
 
@@ -48,7 +50,49 @@ azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/m
 Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` guides you through creating one.
 
 > [!NOTE]
-> After init, confirm that `rai_policy_name` in the generated `azure.yaml` holds your policy's full ARM resource ID.
+> After init, confirm that `raiPolicyName` in the generated `azure.yaml` holds your policy's full ARM resource ID.
+
+### Run and invoke locally
+
+Local execution verifies the agent code and its model connection. The platform applies the RAI policy only after deployment, so a local run does not verify the guardrail itself.
+
+If you are running this sample from a repository clone instead of an initialized project, create an `azd` environment and configure your existing project and model:
+
+```bash
+azd env new <environment-name>
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<model-deployment-name>"
+```
+
+Create a virtual environment in the service directory:
+
+```bash
+cd src/agent-framework-content-safety-guardrail
+python -m venv .venv
+
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+
+# macOS or Linux
+source .venv/bin/activate
+
+python -m pip install uv
+cd ../..
+```
+
+On Windows, use a short checkout path such as `C:\src\foundry-samples`. If a deeply nested checkout cannot be shortened, follow [Windows DLL import path errors](#windows-dll-import-path-errors) before starting the agent.
+
+Start the agent:
+
+```bash
+azd ai agent run
+```
+
+After the ready message appears, open another terminal in the project directory and invoke the local endpoint:
+
+```bash
+azd ai agent invoke --local "Write a short friendly hello message."
+```
 
 ### Provision Azure resources (if needed)
 
@@ -84,7 +128,7 @@ azd ai agent invoke "Write a short friendly hello message."
 
 ### Set up the Python virtual environment
 
-- Open the Command Palette (`Ctrl+Shift+P`) and run **Python: Create Environment...** to create a virtual environment in the workspace (or **Python: Select Interpreter** to use an existing one).
+- Open `src/agent-framework-content-safety-guardrail`, then run **Python: Create Environment...** from the Command Palette to create a virtual environment (or run **Python: Select Interpreter** to use an existing one).
 - Install dependencies in the virtual environment:
 
   ```bash
@@ -102,13 +146,19 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 
 ### Or run manually, then open the Inspector
 
-1. Set the required environment variables and sign in to Azure with the Azure CLI (`az login`).
-2. Start the agent: `python main.py` (listens on `http://localhost:8088`).
-3. Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
+1. From `src/agent-framework-content-safety-guardrail`, set `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME` to your existing project endpoint and model deployment, then sign in with the Azure CLI (`az login`).
+2. Start the agent with `python main.py`. It listens on `http://localhost:8088` by default; set the `PORT` environment variable to use another port.
+3. Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test. You can also invoke the endpoint directly:
+
+   ```bash
+   curl -X POST http://localhost:8088/responses \
+     -H "Content-Type: application/json" \
+     -d '{"input":"Write a short friendly hello message."}'
+   ```
 
 ### Deploy to Foundry
 
-1. Set `rai_policy_name` in `azure.yaml` to your policy's full ARM resource ID.
+1. Set `raiPolicyName` in `azure.yaml` to your policy's full ARM resource ID.
 2. Run **Foundry Toolkit: Deploy Hosted Agent** and follow the wizard to deploy.
 
 ## Verify the guardrail
@@ -127,7 +177,22 @@ A prompt that passes the policy returns `HTTP 200` with the agent's response. A 
 }
 ```
 
-If a violating prompt isn't blocked, confirm that the policy referenced by `rai_policy_name` is configured to filter the relevant content category and severity.
+If a violating prompt isn't blocked, confirm that the policy referenced by `raiPolicyName` is configured to filter the relevant content category and severity.
+
+## Troubleshooting
+
+### Windows DLL import path errors
+
+If startup fails while importing `_cffi_backend` with `The filename or extension is too long`, the service-local virtual environment exceeded the Windows DLL path limit. Clone the repository to a shorter path, or create and activate the virtual environment at a short path before installing the service requirements and running `python main.py`:
+
+```powershell
+$venvPath = Join-Path $env:TEMP "content-safety-guardrail-venv"
+python -m venv $venvPath
+& "$venvPath\Scripts\Activate.ps1"
+python -m pip install uv
+uv pip install -r requirements.txt
+python main.py
+```
 
 ## Next steps
 
