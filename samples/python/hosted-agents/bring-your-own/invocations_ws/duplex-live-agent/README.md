@@ -82,7 +82,7 @@ A sample for building real-time voice agents that maintain two parallel tracks s
 ## Running locally
 
 ```bash
-cd duplex-live-agent
+cd duplex-live-agent/src/duplex-live-agent
 
 python -m venv .venv
 source .venv/bin/activate
@@ -94,6 +94,9 @@ export $(grep -v '^#' .env | xargs)
 
 python main.py
 # → Uvicorn running on http://0.0.0.0:8088
+
+# Or, if port 8088 is already in use:
+PORT=18088 python main.py
 ```
 
 ### Headless E2E test
@@ -101,12 +104,15 @@ python main.py
 In a second terminal:
 
 ```bash
-cd duplex-live-agent
+cd duplex-live-agent/src/duplex-live-agent
 source .venv/bin/activate
 python e2e_local.py
 # [e2e] session_started:   True
 # [e2e] audio_bytes recvd: 230400
 # [e2e] result:            PASS
+
+# Match a custom server port:
+python e2e_local.py --url ws://localhost:18088/invocations_ws
 ```
 
 The test sends a single JSON text message
