@@ -13,21 +13,57 @@ The agent receives a request via `POST /responses` with `"background": true`. Th
 ### Prerequisites
 
 - Python 3.12+
+- [Azure Developer CLI (`azd`)](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) with the Foundry extension:
+
+  ```bash
+  azd ext install microsoft.foundry
+  ```
+
 - Azure CLI installed and authenticated (`az login`)
-- Foundry project with a deployed model
+- Foundry project with a deployed model that your signed-in identity can access
+
+### Configure the local environment
+
+Create an `azd` environment for the project, then set the endpoint and model
+deployment used by the local process:
+
+```bash
+azd env new <environment-name> \
+  --subscription <subscription-id> \
+  --location <project-location>
+azd env set FOUNDRY_PROJECT_ENDPOINT \
+  "https://<account>.services.ai.azure.com/api/projects/<project>" \
+  --environment <environment-name>
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME \
+  "<model-deployment-name>" \
+  --environment <environment-name>
+```
 
 ### Run the agent locally
 
 ```bash
-azd ai agent run
+azd ai agent run --environment <environment-name>
 ```
 
 The agent starts on `http://localhost:8088/`.
 
+On a headless system, add `--no-client`. If port 8088 is unavailable, add
+`--port <local-port>` and pass the same port when invoking the agent. Replace
+8088 in the curl examples as well.
+
 ### Invoke the local agent
 
 ```bash
-azd ai agent invoke --local "Analyze the impact of AI on healthcare"
+azd ai agent invoke --environment <environment-name> \
+  --local "Analyze the impact of AI on healthcare"
+```
+
+For an alternate port:
+
+```bash
+azd ai agent invoke --environment <environment-name> \
+  --local --port <local-port> \
+  "Analyze the impact of AI on healthcare"
 ```
 
 Or test background and synchronous modes directly with curl:
