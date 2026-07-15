@@ -88,8 +88,12 @@ public sealed record ActivitySnapshot(
     IReadOnlyList<ActivityEventSnapshot> Events,
     IReadOnlyList<ActivityLinkSnapshot> Links)
 {
+    public IReadOnlyList<ActivityTagEntrySnapshot>? TagEntries { get; init; }
+
     internal static ActivitySnapshot Create(Activity activity)
-        => new(
+    {
+        IReadOnlyList<ActivityTagEntrySnapshot> tags = SnapshotTags(activity);
+        return new(
             activity.Source.Name,
             activity.OperationName,
             activity.DisplayName,
@@ -104,43 +108,58 @@ public sealed record ActivitySnapshot(
             activity.TraceStateString,
             activity.StartTimeUtc,
             activity.Duration,
-            SnapshotTags(activity),
+            CollapseTags(tags),
             activity.Baggage.Select(ActivityBaggageEntrySnapshot.Create).ToArray(),
             activity.Events.Select(ActivityEventSnapshot.Create).ToArray(),
-            activity.Links.Select(ActivityLinkSnapshot.Create).ToArray());
+            activity.Links.Select(ActivityLinkSnapshot.Create).ToArray())
+        {
+            TagEntries = tags,
+        };
+    }
 
-    private static IReadOnlyDictionary<string, object?> SnapshotTags(Activity activity)
+    private static IReadOnlyList<ActivityTagEntrySnapshot> SnapshotTags(Activity activity)
     {
         // Activity owns this get-only, non-virtual collection view.
-        Dictionary<string, object?> copy = new(StringComparer.Ordinal);
+        List<ActivityTagEntrySnapshot> copy = [];
         foreach (KeyValuePair<string, object?> pair in activity.TagObjects)
         {
-            copy[pair.Key] = SnapshotValue(pair.Value);
+            copy.Add(new ActivityTagEntrySnapshot(pair.Key, SnapshotValue(pair.Value)));
         }
 
-        return new ReadOnlyDictionary<string, object?>(copy);
+        return copy.ToArray();
     }
 
-    internal static IReadOnlyDictionary<string, object?> SnapshotTags(ActivityEvent activityEvent)
+    internal static IReadOnlyList<ActivityTagEntrySnapshot> SnapshotTags(ActivityEvent activityEvent)
     {
-        Dictionary<string, object?> copy = new(StringComparer.Ordinal);
+        List<ActivityTagEntrySnapshot> copy = [];
         foreach (KeyValuePair<string, object?> pair in activityEvent.Tags ?? [])
         {
-            copy[pair.Key] = SnapshotValue(pair.Value);
+            copy.Add(new ActivityTagEntrySnapshot(pair.Key, SnapshotValue(pair.Value)));
         }
 
-        return new ReadOnlyDictionary<string, object?>(copy);
+        return copy.ToArray();
     }
 
-    internal static IReadOnlyDictionary<string, object?> SnapshotTags(ActivityLink link)
+    internal static IReadOnlyList<ActivityTagEntrySnapshot> SnapshotTags(ActivityLink link)
     {
-        Dictionary<string, object?> copy = new(StringComparer.Ordinal);
+        List<ActivityTagEntrySnapshot> copy = [];
         foreach (KeyValuePair<string, object?> pair in link.Tags ?? [])
         {
-            copy[pair.Key] = SnapshotValue(pair.Value);
+            copy.Add(new ActivityTagEntrySnapshot(pair.Key, SnapshotValue(pair.Value)));
         }
 
-        return new ReadOnlyDictionary<string, object?>(copy);
+        return copy.ToArray();
+    }
+
+    internal static IReadOnlyDictionary<string, object?> CollapseTags(IReadOnlyList<ActivityTagEntrySnapshot> tags)
+    {
+        Dictionary<string, object?> result = new(StringComparer.Ordinal);
+        foreach (ActivityTagEntrySnapshot tag in tags)
+        {
+            result[tag.Key] = tag.Value;
+        }
+
+        return new ReadOnlyDictionary<string, object?>(result);
     }
 
     private static object? SnapshotValue(object? value, int depth = 0)
@@ -208,6 +227,8 @@ public sealed record ActivitySnapshot(
 
 public sealed record ActivityOpaqueValue(string? Type);
 
+public sealed record ActivityTagEntrySnapshot(string Key, object? Value);
+
 public sealed record ActivityBaggageEntrySnapshot(string Key, string? Value)
 {
     internal static ActivityBaggageEntrySnapshot Create(KeyValuePair<string, string?> baggage)
@@ -219,8 +240,16 @@ public sealed record ActivityEventSnapshot(
     DateTimeOffset Timestamp,
     IReadOnlyDictionary<string, object?> Tags)
 {
+    public IReadOnlyList<ActivityTagEntrySnapshot>? TagEntries { get; init; }
+
     internal static ActivityEventSnapshot Create(ActivityEvent activityEvent)
-        => new(activityEvent.Name, activityEvent.Timestamp, ActivitySnapshot.SnapshotTags(activityEvent));
+    {
+        IReadOnlyList<ActivityTagEntrySnapshot> tags = ActivitySnapshot.SnapshotTags(activityEvent);
+        return new(activityEvent.Name, activityEvent.Timestamp, ActivitySnapshot.CollapseTags(tags))
+        {
+            TagEntries = tags,
+        };
+    }
 }
 
 public sealed record ActivityLinkSnapshot(
@@ -230,11 +259,19 @@ public sealed record ActivityLinkSnapshot(
     string? TraceState,
     IReadOnlyDictionary<string, object?> Tags)
 {
+    public IReadOnlyList<ActivityTagEntrySnapshot>? TagEntries { get; init; }
+
     internal static ActivityLinkSnapshot Create(ActivityLink link)
-        => new(
+    {
+        IReadOnlyList<ActivityTagEntrySnapshot> tags = ActivitySnapshot.SnapshotTags(link);
+        return new(
             link.Context.TraceId,
             link.Context.SpanId,
             link.Context.TraceFlags,
             link.Context.TraceState,
-            ActivitySnapshot.SnapshotTags(link));
+            ActivitySnapshot.CollapseTags(tags))
+        {
+            TagEntries = tags,
+        };
+    }
 }

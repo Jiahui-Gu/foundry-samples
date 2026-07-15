@@ -331,6 +331,65 @@ public sealed class ContentProjectionTests
             fallback.GetProperty("properties").GetProperty("type").GetString());
     }
 
+    [Fact]
+    public void Project_CollectionPolicyDoesNotTrustCollectionAroundCustomList()
+    {
+        ThrowingList<string> values = new();
+        Collection<string> wrappedValues = new(values);
+        CollectionContent content = new(wrappedValues);
+
+        JsonElement properties = JsonSerializer.SerializeToElement(ContentProjection.Project(content))
+            .GetProperty("properties");
+
+        Assert.False(values.Accessed);
+        Assert.False(values.EnumeratorInvoked);
+        Assert.Equal(
+            wrappedValues.GetType().FullName,
+            properties.GetProperty("values").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public void Project_CollectionPolicyRetainsCollectionBackedByList()
+    {
+        Collection<string> values = new(new List<string> { "first", "second" });
+        CollectionContent content = new(values);
+
+        JsonElement properties = JsonSerializer.SerializeToElement(ContentProjection.Project(content))
+            .GetProperty("properties");
+
+        Assert.Equal(
+            new[] { "first", "second" },
+            properties.GetProperty("values").EnumerateArray().Select(value => value.GetString()));
+    }
+
+    [Fact]
+    public void Project_UsageDetailsProjectsEveryAdditionalCountInOrder()
+    {
+        AdditionalPropertiesDictionary<long> counts = new()
+        {
+            ["ordinary-count"] = 11,
+            ["accessToken"] = 12,
+            ["resp_0123456789abcdefghijk"] = 13,
+        };
+        UsageContent usage = new(new UsageDetails
+        {
+            InputTokenCount = 3,
+            AdditionalCounts = counts,
+        });
+
+        JsonElement details = JsonSerializer.SerializeToElement(ContentProjection.Project(usage))
+            .GetProperty("details");
+        JsonElement additionalCounts = details.GetProperty("additionalCounts");
+
+        Assert.Equal(
+            counts.Keys,
+            additionalCounts.EnumerateArray().Select(entry => entry.GetProperty("key").GetString()));
+        Assert.Equal(
+            counts.Values,
+            additionalCounts.EnumerateArray().Select(entry => entry.GetProperty("value").GetInt64()));
+        Assert.Equal(3, details.GetProperty("inputTokenCount").GetInt64());
+    }
+
     private sealed class UnknownContent : AIContent
     {
         public object Opaque { get; } = new { value = "raw-secret" };
@@ -364,6 +423,11 @@ public sealed class ContentProjectionTests
         public ReadOnlyCollection<string> Values { get; } = values;
 
         public ReadOnlyDictionary<string, object?> Properties { get; } = properties;
+    }
+
+    private sealed class CollectionContent(Collection<string> values) : AIContent
+    {
+        public Collection<string> Values { get; } = values;
     }
 
     private sealed class ThrowingEnumerable : IEnumerable<string>

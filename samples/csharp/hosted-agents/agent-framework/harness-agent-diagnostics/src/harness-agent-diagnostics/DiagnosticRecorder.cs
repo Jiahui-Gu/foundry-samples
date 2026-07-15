@@ -346,17 +346,13 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
             activity.TraceState,
             activity.StartTimeUtc,
             activity.Duration,
-            tags = ProjectActivityTags(activity.Tags),
-            baggage = ProjectActivitySequence(activity.Baggage, entry => new
-            {
-                entry.Key,
-                entry.Value,
-            }),
+            tags = ProjectActivityTags(activity.Tags, activity.TagEntries),
+            baggage = ProjectActivitySequence(activity.Baggage, ProjectSemanticEntry),
             events = ProjectActivitySequence(activity.Events, activityEvent => new
             {
                 activityEvent.Name,
                 activityEvent.Timestamp,
-                tags = ProjectActivityTags(activityEvent.Tags),
+                tags = ProjectActivityTags(activityEvent.Tags, activityEvent.TagEntries),
             }),
             links = ProjectActivitySequence(activity.Links, link => new
             {
@@ -364,15 +360,34 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
                 spanId = link.SpanId.ToHexString(),
                 link.TraceFlags,
                 link.TraceState,
-                tags = ProjectActivityTags(link.Tags),
+                tags = ProjectActivityTags(link.Tags, link.TagEntries),
             }),
         };
     }
 
-    private static object ProjectActivityTags(IReadOnlyDictionary<string, object?> tags)
-        => SafeCollectionPolicy.IsSafeDictionary(tags)
-            ? tags.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+    private static object ProjectActivityTags(
+        IReadOnlyDictionary<string, object?> tags,
+        IReadOnlyList<ActivityTagEntrySnapshot>? tagEntries)
+    {
+        if (tagEntries is not null)
+        {
+            return ProjectActivitySequence(tagEntries, entry => ProjectSemanticEntry(entry.Key, entry.Value));
+        }
+
+        return SafeCollectionPolicy.IsSafeDictionary(tags)
+            ? tags.Select(entry => ProjectSemanticEntry(entry.Key, entry.Value)).ToArray()
             : new ActivityOpaqueValue(tags.GetType().FullName);
+    }
+
+    private static object ProjectSemanticEntry(ActivityBaggageEntrySnapshot entry)
+        => ProjectSemanticEntry(entry.Key, entry.Value);
+
+    private static object ProjectSemanticEntry(string key, object? value)
+        => new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["key"] = key,
+            ["value"] = value,
+        };
 
     private static object ProjectActivitySequence<T>(IReadOnlyList<T> values, Func<T, object> project)
         => SafeCollectionPolicy.IsSafeSequence(values)
@@ -406,6 +421,17 @@ internal sealed partial class SensitiveValueSanitizer
 
         if (node is JsonObject obj)
         {
+            if (TryGetSemanticEntry(obj, out string? semanticKey, out string? keyPropertyName, out string? valuePropertyName))
+            {
+                JsonNode? valueNode = obj[valuePropertyName];
+                obj[keyPropertyName] = JsonValue.Create(SanitizeString(semanticKey, null));
+                obj[valuePropertyName] = IsCredentialBearingProperty(NormalizePropertyName(semanticKey))
+                        && ShouldRedactSemanticValue(valueNode)
+                    ? JsonValue.Create("[REDACTED]")
+                    : Sanitize(valueNode, semanticKey);
+                return obj;
+            }
+
             foreach ((string name, JsonNode? child) in obj.ToList())
             {
                 if (IsContinuationTokenProperty(propertyName)
@@ -461,6 +487,41 @@ internal sealed partial class SensitiveValueSanitizer
 
         return node;
     }
+
+    private static bool TryGetSemanticEntry(
+        JsonObject obj,
+        out string semanticKey,
+        out string keyPropertyName,
+        out string valuePropertyName)
+    {
+        semanticKey = null!;
+        keyPropertyName = null!;
+        valuePropertyName = null!;
+        if (obj.Count != 2)
+        {
+            return false;
+        }
+
+        keyPropertyName = obj.Select(pair => pair.Key)
+            .FirstOrDefault(name => name.Equals("key", StringComparison.OrdinalIgnoreCase))!;
+        valuePropertyName = obj.Select(pair => pair.Key)
+            .FirstOrDefault(name => name.Equals("value", StringComparison.OrdinalIgnoreCase))!;
+        if (keyPropertyName is not null
+            && valuePropertyName is not null
+            && obj[keyPropertyName] is JsonValue keyValue
+            && keyValue.TryGetValue(out string? key)
+            && key is not null)
+        {
+            semanticKey = key;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool ShouldRedactSemanticValue(JsonNode? value)
+        => value is JsonObject or JsonArray
+            || value is JsonValue scalar && scalar.GetValueKind() == JsonValueKind.String;
 
     private string SanitizeString(string text, string? propertyName)
     {

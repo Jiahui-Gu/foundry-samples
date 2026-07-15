@@ -12,16 +12,22 @@ internal static class SafeCollectionPolicy
     {
         Type type = value.GetType();
         if (type.IsArray
-            || IsExactGenericDefinition(type, typeof(List<>))
-            || IsExactGenericDefinition(type, typeof(Collection<>)))
+            || IsExactGenericDefinition(type, typeof(List<>)))
         {
             return true;
         }
 
-        return wrapperDepth < 8
-            && IsExactGenericDefinition(type, typeof(ReadOnlyCollection<>))
-            && TryGetBackingCollection(value, "list", out object? backing)
-            && IsSafeSequence(backing, wrapperDepth + 1);
+        if (wrapperDepth == 8)
+        {
+            return false;
+        }
+
+        return (IsExactGenericDefinition(type, typeof(Collection<>))
+                && TryGetBackingCollection(value, "items", out object? collectionBacking)
+                && IsSafeSequence(collectionBacking, wrapperDepth + 1))
+            || (IsExactGenericDefinition(type, typeof(ReadOnlyCollection<>))
+                && TryGetBackingCollection(value, "list", out object? readOnlyBacking)
+                && IsSafeSequence(readOnlyBacking, wrapperDepth + 1));
     }
 
     internal static bool IsSafeDictionary(object value, int wrapperDepth = 0)

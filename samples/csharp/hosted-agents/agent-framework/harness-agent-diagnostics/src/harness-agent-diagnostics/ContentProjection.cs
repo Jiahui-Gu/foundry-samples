@@ -185,7 +185,33 @@ public static class ContentProjection
 
         foreach (PropertyInfo property in typeof(UsageDetails).GetProperties(BindingFlags.Instance | BindingFlags.Public))
         {
+            if (property.Name == nameof(UsageDetails.AdditionalCounts))
+            {
+                continue;
+            }
+
             result[ToCamelCase(property.Name)] = ProjectSafeValue(property.GetValue(details));
+        }
+
+        result["additionalCounts"] = ProjectAdditionalCounts(details.AdditionalCounts);
+        return result;
+    }
+
+    private static JsonArray ProjectAdditionalCounts(AdditionalPropertiesDictionary<long>? counts)
+    {
+        JsonArray result = [];
+        if (counts is null)
+        {
+            return result;
+        }
+
+        foreach ((string key, long value) in counts)
+        {
+            result.Add(new JsonObject
+            {
+                ["key"] = key,
+                ["value"] = value,
+            });
         }
 
         return result;

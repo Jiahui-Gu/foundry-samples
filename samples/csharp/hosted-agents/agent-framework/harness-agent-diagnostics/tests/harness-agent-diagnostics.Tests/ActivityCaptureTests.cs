@@ -9,6 +9,16 @@ namespace HarnessAgentDiagnostics.Tests;
 public sealed class ActivityCaptureTests
 {
     [Fact]
+    public void SnapshotTagPropertiesRetainDictionaryCompatibility()
+    {
+        Type expectedType = typeof(IReadOnlyDictionary<string, object?>);
+
+        Assert.Equal(expectedType, typeof(ActivitySnapshot).GetProperty(nameof(ActivitySnapshot.Tags))?.PropertyType);
+        Assert.Equal(expectedType, typeof(ActivityEventSnapshot).GetProperty(nameof(ActivityEventSnapshot.Tags))?.PropertyType);
+        Assert.Equal(expectedType, typeof(ActivityLinkSnapshot).GetProperty(nameof(ActivityLinkSnapshot.Tags))?.PropertyType);
+    }
+
+    [Fact]
     public void Drain_CapturesMatchingParentChildActivitiesInStopOrderPreservesBaggageAndIgnoresOtherSources()
     {
         using ActivityCapture capture = new("harness-tests");

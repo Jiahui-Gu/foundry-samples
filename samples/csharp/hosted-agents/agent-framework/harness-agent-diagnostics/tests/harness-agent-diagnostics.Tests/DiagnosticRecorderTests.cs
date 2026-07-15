@@ -558,6 +558,130 @@ public sealed class DiagnosticRecorderTests
     }
 
     [Fact]
+    public async Task RecordAgentResponseUpdateAsync_PersistsAndSanitizesEveryAdditionalCountEntry()
+    {
+        const string responseKey = "resp_0123456789abcdefghijk";
+        const string resourceKey = "/subscriptions/01234567-89ab-cdef-0123-456789abcdef/resourceGroups/probe/providers/Microsoft.Test/widgets/sample";
+        string outputDirectory = CreateOutputDirectory();
+        AdditionalPropertiesDictionary<long> counts = new()
+        {
+            ["ordinary-count"] = 21,
+            [responseKey] = 22,
+            [resourceKey] = 23,
+        };
+
+        try
+        {
+            AgentResponseUpdate update = new(
+                ChatRole.Assistant,
+                [new UsageContent(new UsageDetails { AdditionalCounts = counts })]);
+
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordAgentResponseUpdateAsync(update);
+            }
+
+            using JsonDocument document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(outputDirectory, "agent-response-updates.jsonl")));
+            JsonElement additionalCounts = document.RootElement.GetProperty("contents")[0]
+                .GetProperty("details")
+                .GetProperty("additionalCounts");
+            JsonElement[] entries = additionalCounts.EnumerateArray().ToArray();
+
+            Assert.Equal([21L, 22L, 23L], entries.Select(entry => entry.GetProperty("value").GetInt64()));
+            Assert.Equal("ordinary-count", entries[0].GetProperty("key").GetString());
+            Assert.StartsWith("response-", entries[1].GetProperty("key").GetString(), StringComparison.Ordinal);
+            Assert.StartsWith("azure-resource-", entries[2].GetProperty("key").GetString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(responseKey, document.RootElement.GetRawText(), StringComparison.Ordinal);
+            Assert.DoesNotContain(resourceKey, document.RootElement.GetRawText(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordActivityAsync_SanitizesSemanticTagAndBaggageEntriesWithoutLosingDuplicatesOrOrder()
+    {
+        const string accessToken = "plain-access-token";
+        const string tenantId = "01234567-89ab-cdef-0123-456789abcdef";
+        const string traceId = "0123456789abcdef0123456789abcdef";
+        const string responseId = "resp_0123456789abcdefghijk";
+        const string resourceId = "/subscriptions/01234567-89ab-cdef-0123-456789abcdef/resourceGroups/probe/providers/Microsoft.Test/widgets/sample";
+        string outputDirectory = CreateOutputDirectory();
+        List<KeyValuePair<string, object?>> expectedTags;
+        List<KeyValuePair<string, string?>> expectedBaggage;
+
+        try
+        {
+            using ActivityCapture capture = new("semantic-entry-tests");
+            using ActivitySource source = new("semantic-entry-tests");
+            using (Activity? activity = source.StartActivity("semantic-entries"))
+            {
+                Assert.NotNull(activity);
+                activity.AddTag("accessToken", accessToken);
+                activity.AddTag("accessToken", accessToken);
+                activity.AddTag("tenantId", tenantId);
+                activity.AddTag("traceId", traceId);
+                activity.AddTag("responseId", responseId);
+                activity.AddTag("resourceId", resourceId);
+                activity.AddTag("ordinary", "first");
+                activity.AddTag("ordinary", "second");
+                activity.AddBaggage("accessToken", accessToken);
+                activity.AddBaggage("accessToken", accessToken);
+                activity.AddBaggage("tenantId", tenantId);
+                activity.AddBaggage("traceId", traceId);
+                activity.AddBaggage("responseId", responseId);
+                activity.AddBaggage("resourceId", resourceId);
+                activity.AddBaggage("ordinary", "first");
+                activity.AddBaggage("ordinary", "second");
+                expectedTags = activity.TagObjects.ToList();
+                expectedBaggage = activity.Baggage.ToList();
+            }
+
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await capture.DrainToAsync(recorder);
+            }
+
+            using JsonDocument document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(outputDirectory, "activities.jsonl")));
+            JsonElement root = document.RootElement;
+            JsonElement[] tags = root.GetProperty("tags").EnumerateArray().ToArray();
+            JsonElement[] baggage = root.GetProperty("baggage").EnumerateArray().ToArray();
+
+            AssertSemanticEntries(tags, expectedTags.Select(entry => entry.Key));
+            AssertSemanticEntries(baggage, expectedBaggage.Select(entry => entry.Key));
+            Assert.Equal(
+                expectedTags.Where(entry => entry.Key == "ordinary").Select(entry => entry.Value?.ToString()),
+                ValuesFor(tags, "ordinary"));
+            Assert.Equal(
+                expectedBaggage.Where(entry => entry.Key == "ordinary").Select(entry => entry.Value),
+                ValuesFor(baggage, "ordinary"));
+            Assert.All(ValuesFor(tags, "accessToken"), value => Assert.Equal("[REDACTED]", value));
+            Assert.All(ValuesFor(baggage, "accessToken"), value => Assert.Equal("[REDACTED]", value));
+            Assert.All(ValuesFor(tags, "tenantId"), value => Assert.StartsWith("guid-", value, StringComparison.Ordinal));
+            Assert.All(ValuesFor(baggage, "tenantId"), value => Assert.StartsWith("guid-", value, StringComparison.Ordinal));
+            Assert.All(ValuesFor(tags, "traceId"), value => Assert.StartsWith("otel-id-", value, StringComparison.Ordinal));
+            Assert.All(ValuesFor(baggage, "traceId"), value => Assert.StartsWith("otel-id-", value, StringComparison.Ordinal));
+            Assert.All(ValuesFor(tags, "responseId"), value => Assert.StartsWith("response-", value, StringComparison.Ordinal));
+            Assert.All(ValuesFor(baggage, "responseId"), value => Assert.StartsWith("response-", value, StringComparison.Ordinal));
+            Assert.All(ValuesFor(tags, "resourceId"), value => Assert.StartsWith("azure-resource-", value, StringComparison.Ordinal));
+            Assert.All(ValuesFor(baggage, "resourceId"), value => Assert.StartsWith("azure-resource-", value, StringComparison.Ordinal));
+            Assert.DoesNotContain(accessToken, root.GetRawText(), StringComparison.Ordinal);
+            Assert.DoesNotContain(tenantId, root.GetRawText(), StringComparison.Ordinal);
+            Assert.DoesNotContain(traceId, root.GetRawText(), StringComparison.Ordinal);
+            Assert.DoesNotContain(responseId, root.GetRawText(), StringComparison.Ordinal);
+            Assert.DoesNotContain(resourceId, root.GetRawText(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
     public async Task RecordActivityAsync_LeavesCallerControlledSnapshotCollectionsOpaqueWithoutEnumeration()
     {
         string outputDirectory = CreateOutputDirectory();
@@ -835,6 +959,19 @@ public sealed class DiagnosticRecorderTests
         => string.IsNullOrEmpty(value)
             ? value
             : char.ToLowerInvariant(value[0]) + value[1..];
+
+    private static void AssertSemanticEntries(JsonElement[] entries, IEnumerable<string> expectedKeys)
+    {
+        Assert.Equal(expectedKeys, entries.Select(entry => entry.GetProperty("key").GetString()));
+        Assert.Equal(2, entries.Count(entry => entry.GetProperty("key").GetString() == "accessToken"));
+        Assert.Equal(2, entries.Count(entry => entry.GetProperty("key").GetString() == "ordinary"));
+    }
+
+    private static string?[] ValuesFor(JsonElement[] entries, string key)
+        => entries
+            .Where(entry => entry.GetProperty("key").GetString() == key)
+            .Select(entry => entry.GetProperty("value").GetString())
+            .ToArray();
 
     private static ActivitySnapshot CreateActivitySnapshot(
         IReadOnlyDictionary<string, object?> tags,
