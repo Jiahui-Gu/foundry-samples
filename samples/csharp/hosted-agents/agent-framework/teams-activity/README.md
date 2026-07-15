@@ -71,19 +71,21 @@ The agent host will start on `http://localhost:8088`.
 In a separate terminal, send a request to the agent:
 
 ```bash
-azd ai agent invoke --local "How many meetings do I have tomorrow?"
+azd ai agent invoke --local --user-identity "local-user" "How many meetings do I have tomorrow?"
 ```
 
 Or use curl directly:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "How many meetings do I have tomorrow?"}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -H "x-agent-user-id: local-user" -d '{"input": "How many meetings do I have tomorrow?"}'
 ```
+
+The local user identity is required to isolate user-specific session and toolbox context. Use a different stable value when testing another user.
 
 The server responds with a JSON object containing the response text and a response ID. Continue the conversation by passing that ID as `previous_response_id`:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "How are you?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -H "x-agent-user-id: local-user" -d '{"input": "How are you?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
 ```
 
 ### Deploy to Foundry
