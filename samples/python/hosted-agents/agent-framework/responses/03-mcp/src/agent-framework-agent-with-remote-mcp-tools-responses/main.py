@@ -19,7 +19,7 @@ def main():
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=DefaultAzureCredential(),
+        credential=DefaultAzureCredential(process_timeout=60),
     )
 
     github_pat = os.environ["GITHUB_PAT"]
