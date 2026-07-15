@@ -1,5 +1,6 @@
 using HarnessAgentDiagnostics;
 using System.Reflection;
+using Azure.Core;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -45,6 +46,37 @@ public class ProbeAgentFactoryTests
         Assert.Equal("probe", workingFolder);
     }
 
+    [Fact]
+    public void CreateFoundryChatClient_ComposesResponsesClientPathWithPinnedCredentialAndRetryCount()
+    {
+        ProbeConfiguration configuration = new(new Uri("https://example.test"), "gpt-4.1-mini");
+        RecordingFoundryResponsesClientBuilder builder = new();
+
+        IChatClient chatClient = ProbeAgentFactory.CreateFoundryChatClient(configuration, builder);
+
+        Assert.Same(builder.ChatClient, chatClient);
+        Assert.Equal(configuration.ProjectEndpoint, builder.Endpoint);
+        Assert.NotNull(builder.Credential);
+        Assert.Equal("Azure.Identity.DefaultAzureCredential", builder.Credential!.GetType().FullName);
+        Assert.Equal("Azure.Identity", builder.Credential.GetType().Assembly.GetName().Name);
+        Assert.Equal(new Version(1, 20, 0, 0), builder.Credential.GetType().Assembly.GetName().Version);
+        Assert.Equal(3, builder.RetryCount);
+        Assert.Equal(configuration.ModelDeployment, builder.ModelDeployment);
+        Assert.Equal(
+            ["CreateProjectOpenAIClient", "GetResponsesClient", "AsIChatClient"],
+            builder.Calls);
+    }
+
+    [Fact]
+    public void CreateFoundryChatClient_ConstructsPublicClientWithoutNetwork()
+    {
+        ProbeConfiguration configuration = new(new Uri("https://example.test"), "gpt-4.1-mini");
+
+        using IChatClient chatClient = ProbeAgentFactory.CreateFoundryChatClient(configuration);
+
+        Assert.NotNull(chatClient);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -54,6 +86,49 @@ public class ProbeAgentFactoryTests
         var exception = Assert.Throws<ArgumentException>(() => ProbeAgentFactory.Create(new ThrowingChatClient(), openTelemetrySourceName!));
 
         Assert.Contains("openTelemetrySourceName", exception.ParamName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class RecordingFoundryResponsesClientBuilder : ProbeAgentFactory.IFoundryResponsesClientBuilder
+    {
+        public List<string> Calls { get; } = [];
+
+        public TokenCredential? Credential { get; private set; }
+
+        public Uri? Endpoint { get; private set; }
+
+        public IChatClient ChatClient { get; } = new ThrowingChatClient();
+
+        public string? ModelDeployment { get; private set; }
+
+        public int RetryCount { get; private set; }
+
+        public ProbeAgentFactory.IProjectOpenAIClientAdapter CreateProjectOpenAIClient(Uri endpoint, TokenCredential credential, int retryCount)
+        {
+            Endpoint = endpoint;
+            Credential = credential;
+            RetryCount = retryCount;
+            Calls.Add("CreateProjectOpenAIClient");
+            return new RecordingProjectOpenAIClient(this);
+        }
+
+        private sealed class RecordingProjectOpenAIClient(RecordingFoundryResponsesClientBuilder owner) : ProbeAgentFactory.IProjectOpenAIClientAdapter
+        {
+            public ProbeAgentFactory.IResponsesClientAdapter GetResponsesClient()
+            {
+                owner.Calls.Add("GetResponsesClient");
+                return new RecordingResponsesClient(owner);
+            }
+        }
+
+        private sealed class RecordingResponsesClient(RecordingFoundryResponsesClientBuilder owner) : ProbeAgentFactory.IResponsesClientAdapter
+        {
+            public IChatClient AsIChatClient(string modelDeployment)
+            {
+                owner.ModelDeployment = modelDeployment;
+                owner.Calls.Add("AsIChatClient");
+                return owner.ChatClient;
+            }
+        }
     }
 }
 

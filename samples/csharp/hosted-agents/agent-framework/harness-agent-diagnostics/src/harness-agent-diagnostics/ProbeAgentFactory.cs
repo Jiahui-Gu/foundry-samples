@@ -1,10 +1,15 @@
+﻿extern alias azureidentity;
+
 #pragma warning disable OPENAI001
 #pragma warning disable MAAI001
 
 using System.ClientModel.Primitives;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
+using Azure.Core;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI.Responses;
 
 namespace HarnessAgentDiagnostics;
 
@@ -16,14 +21,19 @@ public static class ProbeAgentFactory
     private const string Instructions = "Use compute_probe for deterministic numeric diagnostics, keep notes in the in-memory probe folder, and avoid any external access.";
 
     public static IChatClient CreateFoundryChatClient(ProbeConfiguration configuration)
+        => CreateFoundryChatClient(configuration, FoundryResponsesClientBuilder.Instance);
+
+    internal static IChatClient CreateFoundryChatClient(
+        ProbeConfiguration configuration,
+        IFoundryResponsesClientBuilder foundryResponsesClientBuilder)
     {
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(foundryResponsesClientBuilder);
 
-        return new AIProjectClient(
-                configuration.ProjectEndpoint,
-                new global::Azure.Identity.DefaultAzureCredential(),
-                new AIProjectClientOptions { RetryPolicy = new ClientRetryPolicy(3) })
-            .GetProjectOpenAIClient()
+        TokenCredential credential = new azureidentity::Azure.Identity.DefaultAzureCredential();
+
+        return foundryResponsesClientBuilder
+            .CreateProjectOpenAIClient(configuration.ProjectEndpoint, credential, retryCount: 3)
             .GetResponsesClient()
             .AsIChatClient(configuration.ModelDeployment);
     }
@@ -93,6 +103,51 @@ public static class ProbeAgentFactory
         }
 
         return new ProbeAgentContext(agent, fileStore, todoProvider, agentModeProvider);
+    }
+
+    internal interface IFoundryResponsesClientBuilder
+    {
+        IProjectOpenAIClientAdapter CreateProjectOpenAIClient(Uri endpoint, TokenCredential credential, int retryCount);
+    }
+
+    internal interface IProjectOpenAIClientAdapter
+    {
+        IResponsesClientAdapter GetResponsesClient();
+    }
+
+    internal interface IResponsesClientAdapter
+    {
+        IChatClient AsIChatClient(string modelDeployment);
+    }
+
+    private sealed class FoundryResponsesClientBuilder : IFoundryResponsesClientBuilder
+    {
+        public static IFoundryResponsesClientBuilder Instance { get; } = new FoundryResponsesClientBuilder();
+
+        public IProjectOpenAIClientAdapter CreateProjectOpenAIClient(Uri endpoint, TokenCredential credential, int retryCount)
+        {
+            AIProjectClientOptions options = new()
+            {
+                RetryPolicy = new ClientRetryPolicy(retryCount),
+            };
+
+            ProjectOpenAIClient projectOpenAIClient = new AIProjectClient(endpoint, credential, options).GetProjectOpenAIClient()
+                ?? throw new InvalidOperationException("Foundry project client did not expose a ProjectOpenAIClient.");
+
+            return new ProjectOpenAIClientAdapter(projectOpenAIClient);
+        }
+
+        private sealed class ProjectOpenAIClientAdapter(ProjectOpenAIClient projectOpenAIClient) : IProjectOpenAIClientAdapter
+        {
+            public IResponsesClientAdapter GetResponsesClient()
+                => new ResponsesClientAdapter(projectOpenAIClient.GetResponsesClient());
+        }
+
+        private sealed class ResponsesClientAdapter(ResponsesClient responsesClient) : IResponsesClientAdapter
+        {
+            public IChatClient AsIChatClient(string modelDeployment)
+                => responsesClient.AsIChatClient(modelDeployment);
+        }
     }
 }
 
