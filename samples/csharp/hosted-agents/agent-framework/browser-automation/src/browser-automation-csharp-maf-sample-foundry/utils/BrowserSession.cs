@@ -96,13 +96,25 @@ public class BrowserSession
     
     private static string FindCli()
     {
+        // On Windows, npm's global shims install an extensionless POSIX shell script
+        // named "playwright-cli" alongside "playwright-cli.cmd" (and .ps1). The
+        // extensionless file is not a valid Win32 executable, so it must never be
+        // preferred over .exe/.cmd on that platform (checking it first previously
+        // caused every invocation to fail with "not a valid application for this OS
+        // platform"). On non-Windows platforms the extensionless script is the
+        // correct (and typically only) executable.
+        string[] candidateExtensions = OperatingSystem.IsWindows()
+            ? [".exe", ".cmd", ""]
+            : ["", ".exe", ".cmd"];
+
         var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
         foreach (var dir in pathDirs)
         {
-            var candidate = Path.Combine(dir, "playwright-cli");
-            if (File.Exists(candidate)) return candidate;
-            if (File.Exists(candidate + ".exe")) return candidate + ".exe";
-            if (File.Exists(candidate + ".cmd")) return candidate + ".cmd";
+            foreach (var ext in candidateExtensions)
+            {
+                var candidate = Path.Combine(dir, "playwright-cli" + ext);
+                if (File.Exists(candidate)) return candidate;
+            }
         }
         return "playwright-cli";
     }

@@ -111,6 +111,14 @@ builder.Services.AddFoundryResponses(agent);
 builder.Services.AddSingleton<TokenCredential>(new ToolboxScopedCredential(new DefaultAzureCredential()));
 
 builder.Services.AddFoundryToolboxes(opt => opt.ApiVersion = "v1", toolboxName);
+
+// Fallback session isolation identity for local development. Without this, requests to a
+// locally running agent (dotnet run / docker run / azd ai agent run) can fail with a 500
+// because no x-agent-user-id header is available outside the Foundry runtime. See
+// utils/LocalDevSessionIsolationKeyProvider.cs for details.
+#pragma warning disable MAAI001 // HostedSessionIsolationKeyProvider is experimental
+builder.Services.AddSingleton<HostedSessionIsolationKeyProvider, LocalDevSessionIsolationKeyProvider>();
+#pragma warning restore MAAI001
 builder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
 
 var app = builder.Build();
