@@ -69,12 +69,24 @@ azd ai agent run
 
 The agent host will start on `http://localhost:8088`.
 
+If port 8088 is already in use, select another port:
+
+```bash
+azd ai agent run --port 18089
+```
+
 ### Invoke the local agent
 
 In a separate terminal, invoke the running agent:
 
 ```bash
 azd ai agent invoke --local "Search Microsoft Learn for how to use dependency injection in ASP.NET Core"
+```
+
+When using another port, pass the same port to the invoke command:
+
+```bash
+azd ai agent invoke --local --port 18089 "Search Microsoft Learn for how to use dependency injection in ASP.NET Core"
 ```
 
 Or use curl directly:
@@ -126,10 +138,10 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 1. Restore dependencies:
 
    ```bash
-   dotnet restore
+   dotnet restore src/mcp-tools/mcp-tools.csproj
    ```
 
-2. Configure the agent: create a `.env` file with the [required variables](#environment-variables). The sample loads `.env` automatically on startup.
+2. Configure the agent: create `src/mcp-tools/.env` with the [required variables](#environment-variables). The sample loads it automatically on startup.
 
 3. Sign in to Azure with the Azure CLI so `DefaultAzureCredential` can authenticate the terminal process (the **F5** path reuses the Azure sign-in from the Foundry Toolkit, so it doesn't need a separate `az login`):
 
@@ -140,7 +152,7 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 4. Start the agent (listens on `http://localhost:8088`):
 
    ```bash
-   dotnet run
+   dotnet run --project src/mcp-tools/mcp-tools.csproj
    ```
 
 5. Open the Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
