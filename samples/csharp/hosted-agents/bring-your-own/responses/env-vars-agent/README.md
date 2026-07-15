@@ -81,6 +81,23 @@ azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/m
 
 Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one.
 
+#### Run from an existing clone
+
+If you cloned this repository instead of using `azd ai agent init`, create a
+project-specific azd environment and configure the values that `init` normally
+collects. Use an existing Foundry project endpoint and model deployment, and use
+test-only values for the four connection-backed variables:
+
+```bash
+azd env new env-vars-agent-local
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://your-account.services.ai.azure.com/api/projects/your-project" -e env-vars-agent-local
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "gpt-5.4-mini" -e env-vars-agent-local
+azd env set SECRET_API_KEY "ab12-fake-test-key" -e env-vars-agent-local
+azd env set TARGET "https://api.example.com" -e env-vars-agent-local
+azd env set SECRET_KEY "p@ssw0rd-test-value" -e env-vars-agent-local
+azd env set NON_SECRET_KEY "westus2" -e env-vars-agent-local
+```
+
 ### Provision Azure resources (if needed)
 
 If you don't already have a Foundry project and model deployment:
@@ -96,6 +113,12 @@ azd ai agent run
 ```
 
 The agent host will start on `http://localhost:8088`.
+
+For a headless run, or if port 8088 is already in use, select a free port:
+
+```bash
+azd ai agent run --no-client --port 18088 -e env-vars-agent-local
+```
 
 ### Invoke the local agent
 
@@ -113,6 +136,12 @@ azd ai agent invoke --local "what is NON_SECRET_KEY? it is metadata from a Custo
 
 # CustomKeys credentials (fingerprint only)
 azd ai agent invoke --local "did SECRET_KEY resolve? it is a credentials placeholder."
+```
+
+When the agent is running on a custom port, pass the same port and environment:
+
+```bash
+azd ai agent invoke --local --port 18088 -e env-vars-agent-local "what is TARGET? it is the target of an ApiKey connection."
 ```
 
 Or use curl directly:
