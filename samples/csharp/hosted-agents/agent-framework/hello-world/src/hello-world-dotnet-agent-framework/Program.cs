@@ -28,11 +28,13 @@
  *   # Turn 1 — invoke the agent:
  *   curl -sS -X POST http://localhost:8088/responses \
  *     -H "Content-Type: application/json" \
+ *     -H "x-agent-user-id: local-user" \
  *     -d '{"input": "What is Microsoft Foundry?", "stream": false}' | jq .
  *
  *   # Turn 2 — follow up using the id from the previous response:
  *   curl -sS -X POST http://localhost:8088/responses \
  *     -H "Content-Type: application/json" \
+ *     -H "x-agent-user-id: local-user" \
  *     -d '{"input": "Can you summarize that?", "previous_response_id": "<id>", "stream": false}' | jq .
  */
 

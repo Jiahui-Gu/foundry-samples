@@ -53,22 +53,25 @@ The agent host will start on `http://localhost:8088`.
 
 ### Invoke the local agent
 
-In a separate terminal, send a request to the agent:
+In a separate terminal, send a request to the agent. Local Agent Framework
+requests require a stable user identity for session isolation:
 
 ```bash
-azd ai agent invoke --local "What is Microsoft Foundry?"
+azd ai agent invoke --local --user-identity local-user "What is Microsoft Foundry?"
 ```
 
 Or use curl directly:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "What is Microsoft Foundry?", "stream": false}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -H "x-agent-user-id: local-user" -d '{"input": "What is Microsoft Foundry?", "stream": false}'
 ```
 
-The server responds with a JSON object containing the response text and a response ID. Continue the conversation by passing that ID as `previous_response_id`:
+The server responds with a JSON object containing the response text and a
+response ID. Continue the conversation by passing that ID as
+`previous_response_id` and reusing the same user identity:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Can you summarize that?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID", "stream": false}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -H "x-agent-user-id: local-user" -d '{"input": "Can you summarize that?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID", "stream": false}'
 ```
 
 ### Deploy to Foundry
@@ -135,4 +138,3 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 3. On the **Basics** tab, choose deployment method (**Code** or **Container**) and confirm the agent name.
 4. On **Review + Deploy**, confirm runtime details, pick **CPU and Memory** size, and click **Deploy**.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
-
