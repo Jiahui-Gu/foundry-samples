@@ -16,9 +16,22 @@ The agent uses `AsAIAgent` from the Foundry SDK (`Azure.AI.Projects`) for the mo
 
 Follow [Running the Agent Host Locally](../../../README.md#running-the-agent-host-locally). The toolbox / A2A connection lives in Foundry, so a local run still talks to the same remote executor.
 
+Local requests must include the signed-in user's object ID so the hosting layer
+can establish per-user isolation and pass the user context to the toolbox:
+
 ```bash
-azd ai agent invoke --local "What is 15 multiplied by 23?"
+USER_ID=$(az ad signed-in-user show --query id --output tsv)
+azd ai agent invoke --local --user-identity "$USER_ID" "What is 15 multiplied by 23?"
 ```
+
+Or in PowerShell:
+
+```powershell
+$userId = az ad signed-in-user show --query id --output tsv
+azd ai agent invoke --local --user-identity $userId "What is 15 multiplied by 23?"
+```
+
+The caller should delegate to the remote math expert and return `345`.
 
 ## Deploying
 
