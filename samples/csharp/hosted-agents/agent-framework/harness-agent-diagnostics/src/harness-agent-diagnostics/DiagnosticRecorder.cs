@@ -25,14 +25,14 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
     private int _activeOperations;
     private long _nextRecordSequence;
 
-    public DiagnosticRecorder(string outputDirectory, IEnumerable<string>? sensitiveValues = null)
+    public DiagnosticRecorder(string outputDirectory, string[]? sensitiveValues = null)
         : this(outputDirectory, sensitiveValues, null)
     {
     }
 
     internal DiagnosticRecorder(
         string outputDirectory,
-        IEnumerable<string>? sensitiveValues,
+        string[]? sensitiveValues,
         Func<CancellationToken, Task>? beforeWriteAsync)
     {
         if (string.IsNullOrWhiteSpace(outputDirectory))
@@ -42,7 +42,7 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
 
         OutputDirectory = outputDirectory;
         Directory.CreateDirectory(OutputDirectory);
-        _sanitizer = new SensitiveValueSanitizer(sensitiveValues);
+        _sanitizer = new SensitiveValueSanitizer(CopySensitiveValues(sensitiveValues));
         _beforeWriteAsync = beforeWriteAsync;
     }
 
@@ -346,28 +346,44 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
             activity.TraceState,
             activity.StartTimeUtc,
             activity.Duration,
-            tags = activity.Tags.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
-            baggage = activity.Baggage.Select(entry => new
+            tags = ProjectActivityTags(activity.Tags),
+            baggage = ProjectActivitySequence(activity.Baggage, entry => new
             {
                 entry.Key,
                 entry.Value,
-            }).ToArray(),
-            events = activity.Events.Select(activityEvent => new
+            }),
+            events = ProjectActivitySequence(activity.Events, activityEvent => new
             {
                 activityEvent.Name,
                 activityEvent.Timestamp,
-                tags = activityEvent.Tags.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
-            }).ToArray(),
-            links = activity.Links.Select(link => new
+                tags = ProjectActivityTags(activityEvent.Tags),
+            }),
+            links = ProjectActivitySequence(activity.Links, link => new
             {
                 traceId = link.TraceId.ToHexString(),
                 spanId = link.SpanId.ToHexString(),
                 link.TraceFlags,
                 link.TraceState,
-                tags = link.Tags.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
-            }).ToArray(),
+                tags = ProjectActivityTags(link.Tags),
+            }),
         };
     }
+
+    private static object ProjectActivityTags(IReadOnlyDictionary<string, object?> tags)
+        => SafeCollectionPolicy.IsSafeDictionary(tags)
+            ? tags.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+            : new ActivityOpaqueValue(tags.GetType().FullName);
+
+    private static object ProjectActivitySequence<T>(IReadOnlyList<T> values, Func<T, object> project)
+        => SafeCollectionPolicy.IsSafeSequence(values)
+            ? values.Select(project).ToArray()
+            : new ActivityOpaqueValue(values.GetType().FullName);
+
+    private static string[] CopySensitiveValues(string[]? sensitiveValues)
+        => sensitiveValues?
+            .Where(value => !string.IsNullOrEmpty(value))
+            .OrderByDescending(value => value.Length)
+            .ToArray() ?? [];
 }
 
 internal sealed partial class SensitiveValueSanitizer
@@ -376,12 +392,9 @@ internal sealed partial class SensitiveValueSanitizer
     private readonly List<string> _registeredValues;
     private int _nextAlias;
 
-    public SensitiveValueSanitizer(IEnumerable<string>? registeredValues)
+    public SensitiveValueSanitizer(string[] registeredValues)
     {
-        _registeredValues = registeredValues?
-            .Where(value => !string.IsNullOrEmpty(value))
-            .OrderByDescending(value => value.Length)
-            .ToList() ?? [];
+        _registeredValues = [.. registeredValues];
     }
 
     public JsonNode? Sanitize(JsonNode? node, string? propertyName = null)

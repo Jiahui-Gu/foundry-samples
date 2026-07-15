@@ -13,10 +13,13 @@ namespace HarnessAgentDiagnostics;
 public static class ContentProjection
 {
     public static JsonObject Project(IEnumerable<AIContent> contents)
-        => new()
+    {
+        ArgumentNullException.ThrowIfNull(contents);
+        return new()
         {
-            ["contents"] = new JsonArray(contents.Select(Project).ToArray()),
+            ["contents"] = ProjectContents(contents),
         };
+    }
 
     public static JsonObject Project(AIContent content)
     {
@@ -133,12 +136,26 @@ public static class ContentProjection
         return result;
     }
 
-    private static JsonArray ProjectContents(IEnumerable<AIContent>? contents)
-        => contents is null ? [] : new JsonArray(contents.Select(Project).ToArray());
+    private static JsonNode ProjectContents(IEnumerable<AIContent>? contents)
+    {
+        if (contents is null)
+        {
+            return new JsonArray();
+        }
+
+        if (!SafeCollectionPolicy.IsSafeSequence(contents))
+        {
+            return OpaqueType(contents.GetType());
+        }
+
+        return new JsonArray(contents.Select(Project).ToArray());
+    }
 
     public static JsonObject Project(AgentResponseUpdate update)
     {
         ArgumentNullException.ThrowIfNull(update);
+        IList<AIContent> contents = update.Contents;
+        bool hasSafeContents = SafeCollectionPolicy.IsSafeSequence(contents);
 
         return new JsonObject
         {
@@ -151,10 +168,10 @@ public static class ContentProjection
             ["createdAt"] = ProjectSafeValue(update.CreatedAt),
             ["finishReason"] = update.FinishReason?.ToString(),
             ["continuationToken"] = ProjectContinuationToken(update.ContinuationToken),
-            ["text"] = update.Text,
+            ["text"] = hasSafeContents ? update.Text : null,
             ["additionalProperties"] = ProjectAdditionalProperties(update.AdditionalProperties),
             ["rawRepresentationType"] = update.RawRepresentation?.GetType().FullName,
-            ["contents"] = new JsonArray(update.Contents.Select(Project).ToArray()),
+            ["contents"] = ProjectContents(contents),
         };
     }
 
@@ -212,7 +229,7 @@ public static class ContentProjection
                 ["value"] = Convert.ToBase64String(token.ToBytes().ToArray()),
             };
 
-    private static JsonObject ProjectAdditionalProperties(IEnumerable<KeyValuePair<string, object?>>? additionalProperties)
+    private static JsonObject ProjectAdditionalProperties(AdditionalPropertiesDictionary? additionalProperties)
     {
         JsonObject result = new();
         if (additionalProperties is null)
@@ -220,6 +237,7 @@ public static class ContentProjection
             return result;
         }
 
+        // This sealed framework type owns a private Dictionary, so its enumerator cannot be replaced.
         foreach ((string key, object? value) in additionalProperties)
         {
             result[key] = ProjectSafeValue(value);

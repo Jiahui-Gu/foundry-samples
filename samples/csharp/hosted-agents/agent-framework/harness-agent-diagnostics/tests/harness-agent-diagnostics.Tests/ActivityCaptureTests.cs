@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Text.Json;
 using HarnessAgentDiagnostics;
@@ -121,6 +122,66 @@ public sealed class ActivityCaptureTests
         Assert.Equal(typeof(ThrowingEnumerable).FullName, opaqueValue.Type);
     }
 
+    [Fact]
+    public void Drain_CapturesCompleteFrameworkOwnedActivityCollections()
+    {
+        const int collectionSize = 101;
+        using ActivityCapture capture = new("harness-complete-collections-tests");
+        using ActivitySource source = new("harness-complete-collections-tests");
+        ActivityLink[] links = Enumerable.Range(0, collectionSize)
+            .Select(_ => new ActivityLink(new ActivityContext(
+                ActivityTraceId.CreateRandom(),
+                ActivitySpanId.CreateRandom(),
+                ActivityTraceFlags.Recorded)))
+            .ToArray();
+
+        using (Activity? activity = source.StartActivity(
+                   "complete-collections",
+                   ActivityKind.Internal,
+                   default(ActivityContext),
+                   tags: null,
+                   links))
+        {
+            Assert.NotNull(activity);
+            foreach (int index in Enumerable.Range(0, collectionSize))
+            {
+                activity.SetTag($"tag-{index}", index);
+                activity.AddBaggage($"baggage-{index}", index.ToString());
+                activity.AddEvent(new ActivityEvent($"event-{index}"));
+            }
+        }
+
+        ActivitySnapshot snapshot = Assert.Single(capture.Drain());
+
+        Assert.Equal(collectionSize, snapshot.Tags.Count);
+        Assert.Equal(collectionSize, snapshot.Baggage.Count);
+        Assert.Equal(collectionSize, snapshot.Events.Count);
+        Assert.Equal(collectionSize, snapshot.Links.Count);
+    }
+
+    [Fact]
+    public void Drain_DoesNotTrustBclWrappersAroundCustomActivityTagCollections()
+    {
+        using ActivityCapture capture = new("harness-wrapped-collection-tests");
+        using ActivitySource source = new("harness-wrapped-collection-tests");
+        ThrowingList<string> values = new();
+        ThrowingDictionary<string, object?> properties = new();
+
+        using (Activity? activity = source.StartActivity("wrapped-tag-values"))
+        {
+            Assert.NotNull(activity);
+            activity.SetTag("wrapped.values", new ReadOnlyCollection<string>(values));
+            activity.SetTag("wrapped.properties", new ReadOnlyDictionary<string, object?>(properties));
+        }
+
+        ActivitySnapshot snapshot = Assert.Single(capture.Drain());
+
+        Assert.False(values.Accessed);
+        Assert.False(properties.Accessed);
+        Assert.IsType<ActivityOpaqueValue>(snapshot.Tags["wrapped.values"]);
+        Assert.IsType<ActivityOpaqueValue>(snapshot.Tags["wrapped.properties"]);
+    }
+
     private sealed class ThrowingEnumerable : IEnumerable<string>
     {
         public bool EnumeratorInvoked { get; private set; }
@@ -133,4 +194,5 @@ public sealed class ActivityCaptureTests
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
+
 }

@@ -104,22 +104,39 @@ public sealed record ActivitySnapshot(
             activity.TraceStateString,
             activity.StartTimeUtc,
             activity.Duration,
-            AsReadOnlyDictionary(activity.TagObjects),
+            SnapshotTags(activity),
             activity.Baggage.Select(ActivityBaggageEntrySnapshot.Create).ToArray(),
             activity.Events.Select(ActivityEventSnapshot.Create).ToArray(),
             activity.Links.Select(ActivityLinkSnapshot.Create).ToArray());
 
-    internal static IReadOnlyDictionary<string, object?> AsReadOnlyDictionary(IEnumerable<KeyValuePair<string, object?>>? values)
+    private static IReadOnlyDictionary<string, object?> SnapshotTags(Activity activity)
+    {
+        // Activity owns this get-only, non-virtual collection view.
+        Dictionary<string, object?> copy = new(StringComparer.Ordinal);
+        foreach (KeyValuePair<string, object?> pair in activity.TagObjects)
+        {
+            copy[pair.Key] = SnapshotValue(pair.Value);
+        }
+
+        return new ReadOnlyDictionary<string, object?>(copy);
+    }
+
+    internal static IReadOnlyDictionary<string, object?> SnapshotTags(ActivityEvent activityEvent)
     {
         Dictionary<string, object?> copy = new(StringComparer.Ordinal);
-        int count = 0;
-        foreach (KeyValuePair<string, object?> pair in values ?? [])
+        foreach (KeyValuePair<string, object?> pair in activityEvent.Tags ?? [])
         {
-            if (count++ == SafeCollectionPolicy.MaximumElements)
-            {
-                break;
-            }
+            copy[pair.Key] = SnapshotValue(pair.Value);
+        }
 
+        return new ReadOnlyDictionary<string, object?>(copy);
+    }
+
+    internal static IReadOnlyDictionary<string, object?> SnapshotTags(ActivityLink link)
+    {
+        Dictionary<string, object?> copy = new(StringComparer.Ordinal);
+        foreach (KeyValuePair<string, object?> pair in link.Tags ?? [])
+        {
             copy[pair.Key] = SnapshotValue(pair.Value);
         }
 
@@ -203,7 +220,7 @@ public sealed record ActivityEventSnapshot(
     IReadOnlyDictionary<string, object?> Tags)
 {
     internal static ActivityEventSnapshot Create(ActivityEvent activityEvent)
-        => new(activityEvent.Name, activityEvent.Timestamp, ActivitySnapshot.AsReadOnlyDictionary(activityEvent.Tags));
+        => new(activityEvent.Name, activityEvent.Timestamp, ActivitySnapshot.SnapshotTags(activityEvent));
 }
 
 public sealed record ActivityLinkSnapshot(
@@ -219,5 +236,5 @@ public sealed record ActivityLinkSnapshot(
             link.Context.SpanId,
             link.Context.TraceFlags,
             link.Context.TraceState,
-            ActivitySnapshot.AsReadOnlyDictionary(link.Tags));
+            ActivitySnapshot.SnapshotTags(link));
 }

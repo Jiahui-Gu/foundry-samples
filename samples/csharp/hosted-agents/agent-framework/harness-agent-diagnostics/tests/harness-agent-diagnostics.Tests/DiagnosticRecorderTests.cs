@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -104,6 +106,40 @@ public sealed class DiagnosticRecorderTests
         {
             DeleteOutputDirectory(outputDirectory);
         }
+    }
+
+    [Fact]
+    public async Task RecordProviderStateAsync_DoesNotTrustBclWrappersAroundCustomCollections()
+    {
+        string outputDirectory = CreateOutputDirectory();
+        ThrowingList<string> values = new();
+        ThrowingDictionary<string, object?> properties = new();
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordProviderStateAsync(new
+                {
+                    Values = new ReadOnlyCollection<string>(values),
+                    Properties = new ReadOnlyDictionary<string, object?>(properties),
+                });
+            }
+
+            Assert.False(values.Accessed);
+            Assert.False(properties.Accessed);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public void Constructor_ExposesOnlyConcreteSensitiveValueArrayBoundary()
+    {
+        Assert.Null(typeof(DiagnosticRecorder).GetConstructor([typeof(string), typeof(IEnumerable<string>)]));
+        Assert.NotNull(typeof(DiagnosticRecorder).GetConstructor([typeof(string), typeof(string[])]));
     }
 
     [Fact]
@@ -522,6 +558,119 @@ public sealed class DiagnosticRecorderTests
     }
 
     [Fact]
+    public async Task RecordActivityAsync_LeavesCallerControlledSnapshotCollectionsOpaqueWithoutEnumeration()
+    {
+        string outputDirectory = CreateOutputDirectory();
+        ThrowingReadOnlyDictionary<string, object?> tags = new();
+        ThrowingReadOnlyList<ActivityBaggageEntrySnapshot> baggage = new();
+        ThrowingReadOnlyList<ActivityEventSnapshot> events = new();
+        ThrowingReadOnlyList<ActivityLinkSnapshot> links = new();
+        ActivitySnapshot snapshot = CreateActivitySnapshot(tags, baggage, events, links);
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordActivityAsync(snapshot);
+            }
+
+            Assert.False(tags.Accessed);
+            Assert.False(baggage.Accessed);
+            Assert.False(events.Accessed);
+            Assert.False(links.Accessed);
+
+            using JsonDocument document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(outputDirectory, "activities.jsonl")));
+            JsonElement root = document.RootElement;
+            Assert.Equal(tags.GetType().FullName, root.GetProperty("tags").GetProperty("Type").GetString());
+            Assert.Equal(baggage.GetType().FullName, root.GetProperty("baggage").GetProperty("Type").GetString());
+            Assert.Equal(events.GetType().FullName, root.GetProperty("events").GetProperty("Type").GetString());
+            Assert.Equal(links.GetType().FullName, root.GetProperty("links").GetProperty("Type").GetString());
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordActivityAsync_LeavesCallerControlledEventAndLinkTagDictionariesOpaqueWithoutEnumeration()
+    {
+        string outputDirectory = CreateOutputDirectory();
+        ThrowingReadOnlyDictionary<string, object?> eventTags = new();
+        ThrowingReadOnlyDictionary<string, object?> linkTags = new();
+        ActivitySnapshot snapshot = CreateActivitySnapshot(
+            new Dictionary<string, object?>(),
+            Array.Empty<ActivityBaggageEntrySnapshot>(),
+            new ActivityEventSnapshot[]
+            {
+                new("event", DateTimeOffset.UnixEpoch, eventTags),
+            },
+            new ActivityLinkSnapshot[]
+            {
+                new(
+                ActivityTraceId.CreateRandom(),
+                ActivitySpanId.CreateRandom(),
+                ActivityTraceFlags.Recorded,
+                null,
+                linkTags),
+            });
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordActivityAsync(snapshot);
+            }
+
+            Assert.False(eventTags.Accessed);
+            Assert.False(linkTags.Accessed);
+
+            using JsonDocument document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(outputDirectory, "activities.jsonl")));
+            JsonElement root = document.RootElement;
+            Assert.Equal(
+                eventTags.GetType().FullName,
+                root.GetProperty("events")[0].GetProperty("tags").GetProperty("Type").GetString());
+            Assert.Equal(
+                linkTags.GetType().FullName,
+                root.GetProperty("links")[0].GetProperty("tags").GetProperty("Type").GetString());
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordActivityAsync_DoesNotTrustBclWrappersAroundCallerControlledCollections()
+    {
+        string outputDirectory = CreateOutputDirectory();
+        ThrowingDictionary<string, object?> tags = new();
+        ThrowingList<ActivityBaggageEntrySnapshot> baggage = new();
+        ActivitySnapshot snapshot = CreateActivitySnapshot(
+            new ReadOnlyDictionary<string, object?>(tags),
+            new ReadOnlyCollection<ActivityBaggageEntrySnapshot>(baggage),
+            Array.Empty<ActivityEventSnapshot>(),
+            Array.Empty<ActivityLinkSnapshot>());
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordActivityAsync(snapshot);
+            }
+
+            Assert.False(tags.Accessed);
+            Assert.False(baggage.Accessed);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
     public async Task RecordProviderStateAsync_AssignsContiguousSequenceNumbersToConcurrentAcceptedRecords()
     {
         string outputDirectory = CreateOutputDirectory();
@@ -686,6 +835,31 @@ public sealed class DiagnosticRecorderTests
         => string.IsNullOrEmpty(value)
             ? value
             : char.ToLowerInvariant(value[0]) + value[1..];
+
+    private static ActivitySnapshot CreateActivitySnapshot(
+        IReadOnlyDictionary<string, object?> tags,
+        IReadOnlyList<ActivityBaggageEntrySnapshot> baggage,
+        IReadOnlyList<ActivityEventSnapshot> events,
+        IReadOnlyList<ActivityLinkSnapshot> links)
+        => new(
+            "caller-source",
+            "caller-operation",
+            "caller-display",
+            ActivityKind.Internal,
+            ActivityStatusCode.Ok,
+            null,
+            ActivityTraceId.CreateRandom(),
+            ActivitySpanId.CreateRandom(),
+            default,
+            null,
+            ActivityTraceFlags.Recorded,
+            null,
+            DateTime.UtcNow,
+            TimeSpan.Zero,
+            tags,
+            baggage,
+            events,
+            links);
 
     private sealed class OpaqueCredential(string secret)
     {

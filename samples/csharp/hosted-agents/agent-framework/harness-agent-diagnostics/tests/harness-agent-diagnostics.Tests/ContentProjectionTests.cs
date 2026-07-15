@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.ObjectModel;
 using System.Text.Json;
 using HarnessAgentDiagnostics;
 using Microsoft.Agents.AI;
@@ -229,6 +230,107 @@ public sealed class ContentProjectionTests
         Assert.Equal(typeof(ThrowingEnumerable).FullName, properties.GetProperty("throwingValues").GetProperty("type").GetString());
     }
 
+    [Fact]
+    public void Project_CollectionBoundaryLeavesUnknownEnumerableOpaqueWithoutInvokingEnumerator()
+    {
+        ThrowingContentEnumerable contents = new();
+
+        JsonElement projection = JsonSerializer.SerializeToElement(ContentProjection.Project(contents));
+
+        Assert.False(contents.EnumeratorInvoked);
+        Assert.Equal(
+            typeof(ThrowingContentEnumerable).FullName,
+            projection.GetProperty("contents").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public void Project_AgentResponseUpdateLeavesCustomContentsListOpaqueWithoutInvokingEnumerator()
+    {
+        ThrowingList<AIContent> contents = new();
+        AgentResponseUpdate update = new(ChatRole.Assistant, [new TextContent("initial")])
+        {
+            Contents = contents,
+        };
+
+        JsonElement projection = JsonSerializer.SerializeToElement(ContentProjection.Project(update));
+
+        Assert.False(contents.EnumeratorInvoked);
+        Assert.Equal(JsonValueKind.Null, projection.GetProperty("text").ValueKind);
+        Assert.Equal(
+            contents.GetType().FullName,
+            projection.GetProperty("contents").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public void Project_AgentResponseUpdateCapturesCompleteFrameworkOwnedContents()
+    {
+        const int contentCount = 101;
+        AgentResponseUpdate update = new(
+            ChatRole.Assistant,
+            Enumerable.Range(0, contentCount).Select(index => new TextContent($"content-{index}")).ToArray());
+
+        JsonElement projection = JsonSerializer.SerializeToElement(ContentProjection.Project(update));
+
+        Assert.Equal(contentCount, projection.GetProperty("contents").GetArrayLength());
+    }
+
+    [Fact]
+    public void Project_ToolContentLeavesCustomInputAndOutputListsOpaqueWithoutInvokingEnumerators()
+    {
+        ThrowingList<AIContent> mcpOutputs = new();
+        ThrowingList<AIContent> codeInputs = new();
+        ThrowingList<AIContent> codeOutputs = new();
+        ThrowingList<AIContent> webOutputs = new();
+        ThrowingList<AIContent> imageOutputs = new();
+        (AIContent Content, string PropertyName, ThrowingList<AIContent> Values)[] cases =
+        [
+            (new McpServerToolResultContent("mcp-call") { Outputs = mcpOutputs }, "outputs", mcpOutputs),
+            (new CodeInterpreterToolCallContent("code-call") { Inputs = codeInputs }, "inputs", codeInputs),
+            (new CodeInterpreterToolResultContent("code-call") { Outputs = codeOutputs }, "outputs", codeOutputs),
+            (new WebSearchToolResultContent("web-call") { Outputs = webOutputs }, "outputs", webOutputs),
+            (new ImageGenerationToolResultContent("image-call") { Outputs = imageOutputs }, "outputs", imageOutputs),
+        ];
+
+        foreach ((AIContent content, string propertyName, ThrowingList<AIContent> values) in cases)
+        {
+            JsonElement projection = JsonSerializer.SerializeToElement(ContentProjection.Project(content));
+
+            Assert.False(values.EnumeratorInvoked);
+            Assert.Equal(
+                values.GetType().FullName,
+                projection.GetProperty(propertyName).GetProperty("type").GetString());
+        }
+    }
+
+    [Fact]
+    public void Project_CollectionPolicyDoesNotTrustBclWrappersAroundCustomCollections()
+    {
+        ThrowingList<AIContent> contents = new();
+        ThrowingList<string> values = new();
+        ThrowingDictionary<string, object?> properties = new();
+        ReadOnlyCollection<AIContent> wrappedContents = new(contents);
+        WrappedCollectionContent content = new(
+            new ReadOnlyCollection<string>(values),
+            new ReadOnlyDictionary<string, object?>(properties));
+
+        JsonElement collectionProjection = JsonSerializer.SerializeToElement(ContentProjection.Project(wrappedContents));
+        JsonElement fallback = JsonSerializer.SerializeToElement(ContentProjection.Project(content))
+            .GetProperty("properties");
+
+        Assert.False(contents.EnumeratorInvoked);
+        Assert.False(values.EnumeratorInvoked);
+        Assert.False(properties.Accessed);
+        Assert.Equal(
+            wrappedContents.GetType().FullName,
+            collectionProjection.GetProperty("contents").GetProperty("type").GetString());
+        Assert.Equal(
+            content.Values.GetType().FullName,
+            fallback.GetProperty("values").GetProperty("type").GetString());
+        Assert.Equal(
+            content.Properties.GetType().FullName,
+            fallback.GetProperty("properties").GetProperty("type").GetString());
+    }
+
     private sealed class UnknownContent : AIContent
     {
         public object Opaque { get; } = new { value = "raw-secret" };
@@ -255,6 +357,15 @@ public sealed class ContentProjectionTests
         public ThrowingEnumerable ThrowingValues { get; }
     }
 
+    private sealed class WrappedCollectionContent(
+        ReadOnlyCollection<string> values,
+        ReadOnlyDictionary<string, object?> properties) : AIContent
+    {
+        public ReadOnlyCollection<string> Values { get; } = values;
+
+        public ReadOnlyDictionary<string, object?> Properties { get; } = properties;
+    }
+
     private sealed class ThrowingEnumerable : IEnumerable<string>
     {
         public bool EnumeratorInvoked { get; private set; }
@@ -263,6 +374,19 @@ public sealed class ContentProjectionTests
         {
             EnumeratorInvoked = true;
             throw new InvalidOperationException("must not enumerate custom iterables");
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class ThrowingContentEnumerable : IEnumerable<AIContent>
+    {
+        public bool EnumeratorInvoked { get; private set; }
+
+        public IEnumerator<AIContent> GetEnumerator()
+        {
+            EnumeratorInvoked = true;
+            throw new InvalidOperationException("must not enumerate custom content iterables");
         }
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
