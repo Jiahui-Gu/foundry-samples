@@ -52,6 +52,12 @@ See [main.py](src/browser_automation_agent_sample_foundry/main.py) for the full 
 - Azure CLI installed and authenticated (`az login`).
 - Docker, if you want to build the container locally.
 - Python 3.11 or later and `uv` (or `pip`) for local development.
+- Node.js 22 or later and the [`@playwright/cli`](https://github.com/microsoft/playwright-cli) package for local runs. The `run_playwright_cli` tool shells out to the `playwright-cli` executable, so it must be on `PATH` before starting the agent locally (the hosted container installs it automatically; see [Dockerfile](src/browser_automation_agent_sample_foundry/Dockerfile)):
+
+  ```bash
+  npm install -g @playwright/cli@latest
+  playwright-cli install --skills
+  ```
 
 For hosted-agent setup, see [Deploy hosted agents with azd](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?pivots=azd).
 
@@ -98,9 +104,11 @@ Set these values with `azd env set` before running `azd provision`. `azd` stores
 
 ### Local setup
 
-Install dependencies and run the hosted-agent server locally:
+Install the `playwright-cli` executable used by the `run_playwright_cli` tool (see [Prerequisites](#prerequisites)), then install Python dependencies and run the hosted-agent server locally:
 
 ```bash
+npm install -g @playwright/cli@latest
+playwright-cli install --skills
 pip install -r requirements.txt
 python main.py
 ```
@@ -108,6 +116,8 @@ python main.py
 Or using `uv`:
 
 ```bash
+npm install -g @playwright/cli@latest
+playwright-cli install --skills
 uv pip install -r requirements.txt
 uv run main.py
 ```

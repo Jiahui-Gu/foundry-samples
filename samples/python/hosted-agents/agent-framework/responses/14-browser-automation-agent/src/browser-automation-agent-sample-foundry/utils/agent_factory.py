@@ -144,7 +144,13 @@ def build_agent(settings: AgentSettings) -> tuple[Agent, MCPStreamableHTTPTool]:
         credential=credential,
     )
 
-    skills_provider = SkillsProvider.from_paths(skill_paths())
+    # `load_skill` only reads bundled skill documentation (no side effects), so it is
+    # safe to run without per-call approval. Without this, the documented single-POST
+    # /responses flow (see README "Interacting with the agent") stalls on an
+    # `mcp_approval_request` that the plain curl/Invoke-WebRequest examples never answer.
+    skills_provider = SkillsProvider.from_paths(
+        skill_paths(), disable_load_skill_approval=True
+    )
     toolbox_mcp_tool = make_toolbox_mcp_tool(settings, default_credential)
     run_playwright_cli = make_run_playwright_cli(settings)
     close_browser_session = make_close_browser_session(settings)
