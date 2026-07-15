@@ -59,8 +59,12 @@ azd provision
 
 ### Run the agent locally
 
+Choose a free local port and pass it explicitly. The examples below use
+`8088`; if you choose another port, use the same value when invoking the
+agent.
+
 ```bash
-azd ai agent run
+azd ai agent run --port 8088
 ```
 
 The agent host will start on `http://localhost:8088`.
@@ -70,7 +74,7 @@ The agent host will start on `http://localhost:8088`.
 In a separate terminal, invoke the running agent:
 
 ```bash
-azd ai agent invoke --local '{"message": "What time is it right now?"}'
+azd ai agent invoke --local --port 8088 --protocol invocations '{"message": "What time is it right now?"}'
 ```
 
 Or invoke directly with curl. The `-i` flag surfaces the `x-agent-session-id` response header you need for multi-turn conversations:
@@ -149,8 +153,10 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 
 ### Or run manually, then open the Inspector
 
-1. Set the required environment variables and sign in to Azure with the Azure CLI (`az login`).
-2. Start the agent: `python main.py` (listens on `http://localhost:8088`).
+1. Copy `.env.example` to `.env`, set `FOUNDRY_PROJECT_ENDPOINT` and
+   `AZURE_AI_MODEL_DEPLOYMENT_NAME`, and choose a free `PORT`. Sign in to Azure
+   with the Azure CLI (`az login`).
+2. Start the agent: `python main.py` (listens on the configured `PORT`).
 3. Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
 
 ### Deploy to Foundry
