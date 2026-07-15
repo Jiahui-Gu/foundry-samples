@@ -21,6 +21,47 @@ The agent uses `FoundryChatClient` from the Agent Framework and is served via `R
    ```
 4. **GitHub Personal Access Token (PAT)** — required for authenticating with the GitHub Copilot MCP server. [Create a PAT](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
 
+### Run this checkout directly
+
+Use this path when you cloned the repository and want to test the sample without
+generating another project. It requires an existing Foundry project with a
+deployed model, Python 3.12 or later, and an authenticated Azure CLI session.
+
+From this sample directory, create the virtual environment beside the checkout
+rather than under the deeply nested service directory. This avoids Windows path
+length failures while keeping dependencies isolated:
+
+```powershell
+$service = Join-Path $PWD "src\agent-framework-agent-with-remote-mcp-tools-responses"
+$venv = Join-Path (Split-Path -Parent (git rev-parse --show-toplevel)) "mcp-agent-venv"
+
+python -m venv $venv
+& "$venv\Scripts\python.exe" -m pip install uv
+& "$venv\Scripts\uv.exe" pip install --python "$venv\Scripts\python.exe" --prerelease=allow -r "$service\requirements.txt"
+
+Copy-Item "$service\.env.example" "$service\.env"
+```
+
+Set `FOUNDRY_PROJECT_ENDPOINT`, `AZURE_AI_MODEL_DEPLOYMENT_NAME`, and
+`GITHUB_PAT` in the new `.env` file. Then start the checked-out source on an
+explicit unused port:
+
+```powershell
+$port = 8088
+$env:PORT = "$port"
+Set-Location $service
+& "$venv\Scripts\python.exe" main.py
+```
+
+In another PowerShell terminal, invoke the declared Responses endpoint on the
+same port:
+
+```powershell
+$port = 8088
+$body = '{"input":"List all the repositories I own on GitHub."}'
+(Invoke-WebRequest -Uri "http://localhost:$port/responses" -Method POST -ContentType "application/json" -Body $body).Content
+```
+
 ### Initialize the agent project
 
 No cloning required. Create a new folder and initialize from the manifest:
