@@ -80,6 +80,33 @@ public sealed class DiagnosticRecorderTests
     }
 
     [Fact]
+    public async Task RecordProviderStateAsync_LeavesCustomEnumerablesOpaqueWithoutInvokingEnumerator()
+    {
+        string outputDirectory = CreateOutputDirectory();
+        ThrowingEnumerable values = new();
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordProviderStateAsync(new ProviderStateWithCustomEnumerable(values));
+            }
+
+            Assert.False(values.EnumeratorInvoked);
+
+            using JsonDocument document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(outputDirectory, "provider-state.jsonl")));
+            Assert.Equal(
+                typeof(ThrowingEnumerable).FullName,
+                document.RootElement.GetProperty("Values").GetProperty("type").GetString());
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
     public async Task RecordProviderStateAsync_RecordsAnonymousRecordAndJsonObjectSnapshots()
     {
         string outputDirectory = CreateOutputDirectory();
@@ -527,23 +554,27 @@ public sealed class DiagnosticRecorderTests
     public async Task DisposeAsync_FlushesCallsStartedBeforeDisposalAndRejectsLaterCalls()
     {
         string outputDirectory = CreateOutputDirectory();
-        using ManualResetEventSlim projectionStarted = new();
-        using ManualResetEventSlim releaseProjection = new();
-        DiagnosticRecorder recorder = new(outputDirectory);
-        BlockingProviderState providerState = new(projectionStarted, releaseProjection);
+        TaskCompletionSource writeAccepted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource releaseWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        DiagnosticRecorder recorder = new(
+            outputDirectory,
+            sensitiveValues: null,
+            beforeWriteAsync: _ =>
+            {
+                writeAccepted.TrySetResult();
+                return releaseWrite.Task;
+            });
 
         try
         {
-            Task acceptedRecord = Task.Run(() => recorder.RecordProviderStateAsync(providerState));
-            Assert.True(
-                await Task.Run(() => projectionStarted.Wait(TimeSpan.FromSeconds(10))),
-                "The record call did not reach content projection.");
+            Task acceptedRecord = recorder.RecordProviderStateAsync(new { value = "accepted-before-dispose" });
+            await writeAccepted.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
             ValueTask disposal = recorder.DisposeAsync();
             await Assert.ThrowsAsync<ObjectDisposedException>(
                 () => recorder.RecordProviderStateAsync(new { value = "started-after-dispose" }));
 
-            releaseProjection.Set();
+            releaseWrite.TrySetResult();
             await acceptedRecord;
             await disposal;
 
@@ -553,7 +584,7 @@ public sealed class DiagnosticRecorderTests
         }
         finally
         {
-            releaseProjection.Set();
+            releaseWrite.TrySetResult();
             await recorder.DisposeAsync();
             DeleteOutputDirectory(outputDirectory);
         }
@@ -679,31 +710,22 @@ public sealed class DiagnosticRecorderTests
 
     private sealed record ProviderStateRecord(string Kind, int Value);
 
-    private sealed class BlockingProviderState
+    private sealed class ProviderStateWithCustomEnumerable(ThrowingEnumerable values)
     {
-        public BlockingProviderState(ManualResetEventSlim projectionStarted, ManualResetEventSlim releaseProjection)
-        {
-            Values = new BlockingValues(projectionStarted, releaseProjection);
-        }
-
-        public IEnumerable<string> Values { get; }
+        public ThrowingEnumerable Values { get; } = values;
     }
 
-    private sealed class BlockingValues(
-        ManualResetEventSlim projectionStarted,
-        ManualResetEventSlim releaseProjection) : IEnumerable<string>
+    private sealed class ThrowingEnumerable : IEnumerable<string>
     {
+        public bool EnumeratorInvoked { get; private set; }
+
         public IEnumerator<string> GetEnumerator()
         {
-            projectionStarted.Set();
-            if (!releaseProjection.Wait(TimeSpan.FromSeconds(10)))
-            {
-                throw new TimeoutException("Timed out waiting to release content projection.");
-            }
-
-            yield return "accepted-before-dispose";
+            EnumeratorInvoked = true;
+            throw new InvalidOperationException("must not enumerate custom iterables");
         }
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
+
 }

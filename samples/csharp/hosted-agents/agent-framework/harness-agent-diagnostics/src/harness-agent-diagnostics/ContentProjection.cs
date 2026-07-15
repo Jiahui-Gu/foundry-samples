@@ -1,5 +1,4 @@
 using System.Collections;
-using System.Collections.ObjectModel;
 using System.Runtime.CompilerServices;
 using System.Reflection;
 using System.Text.Json;
@@ -289,7 +288,7 @@ public static class ContentProjection
     private static bool TryProjectSafeDictionary(object value, int depth, out JsonObject? node)
     {
         node = null;
-        if (value is not IDictionary dictionary || !IsSafeDictionaryType(value.GetType()))
+        if (value is not IDictionary dictionary || !SafeCollectionPolicy.IsSafeDictionary(value))
         {
             return false;
         }
@@ -300,7 +299,7 @@ public static class ContentProjection
         {
             if (entry.Key is string key)
             {
-                if (count++ == 100)
+                if (count++ == SafeCollectionPolicy.MaximumElements)
                 {
                     result["truncated"] = true;
                     break;
@@ -317,7 +316,7 @@ public static class ContentProjection
     private static bool TryProjectSafeSequence(object value, int depth, out JsonArray? node)
     {
         node = null;
-        if (value is byte[] || value is not IEnumerable sequence || !IsSafeSequenceType(value.GetType()))
+        if (value is byte[] || value is not IEnumerable sequence || !SafeCollectionPolicy.IsSafeSequence(value))
         {
             return false;
         }
@@ -326,7 +325,7 @@ public static class ContentProjection
         int count = 0;
         foreach (object? item in sequence)
         {
-            if (count++ == 100)
+            if (count++ == SafeCollectionPolicy.MaximumElements)
             {
                 result.Add(new JsonObject { ["truncated"] = true });
                 break;
@@ -338,21 +337,6 @@ public static class ContentProjection
         node = result;
         return true;
     }
-
-    private static bool IsSafeSequenceType(Type type)
-        => type.IsArray
-            || IsExactGenericDefinition(type, typeof(List<>))
-            || IsExactGenericDefinition(type, typeof(Collection<>))
-            || IsExactGenericDefinition(type, typeof(ReadOnlyCollection<>));
-
-    private static bool IsSafeDictionaryType(Type type)
-        => IsExactGenericDefinition(type, typeof(Dictionary<,>))
-            || IsExactGenericDefinition(type, typeof(SortedDictionary<,>))
-            || IsExactGenericDefinition(type, typeof(SortedList<,>))
-            || IsExactGenericDefinition(type, typeof(ReadOnlyDictionary<,>));
-
-    private static bool IsExactGenericDefinition(Type type, Type definition)
-        => type.IsGenericType && type.GetGenericTypeDefinition() == definition;
 
     private static string ToCamelCase(string value)
         => string.Concat(char.ToLowerInvariant(value[0]), value[1..]);

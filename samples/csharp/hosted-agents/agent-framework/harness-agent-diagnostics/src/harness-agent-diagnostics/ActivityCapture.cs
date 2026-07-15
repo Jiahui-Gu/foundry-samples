@@ -110,8 +110,21 @@ public sealed record ActivitySnapshot(
             activity.Links.Select(ActivityLinkSnapshot.Create).ToArray());
 
     internal static IReadOnlyDictionary<string, object?> AsReadOnlyDictionary(IEnumerable<KeyValuePair<string, object?>>? values)
-        => new ReadOnlyDictionary<string, object?>(
-            (values ?? []).ToDictionary(pair => pair.Key, pair => SnapshotValue(pair.Value), StringComparer.Ordinal));
+    {
+        Dictionary<string, object?> copy = new(StringComparer.Ordinal);
+        int count = 0;
+        foreach (KeyValuePair<string, object?> pair in values ?? [])
+        {
+            if (count++ == SafeCollectionPolicy.MaximumElements)
+            {
+                break;
+            }
+
+            copy[pair.Key] = SnapshotValue(pair.Value);
+        }
+
+        return new ReadOnlyDictionary<string, object?>(copy);
+    }
 
     private static object? SnapshotValue(object? value, int depth = 0)
     {
@@ -135,13 +148,19 @@ public sealed record ActivitySnapshot(
             return new ActivityOpaqueValue(value.GetType().FullName);
         }
 
-        if (value is IDictionary dictionary)
+        if (value is IDictionary dictionary && SafeCollectionPolicy.IsSafeDictionary(value))
         {
             Dictionary<string, object?> copy = new(StringComparer.Ordinal);
+            int count = 0;
             foreach (DictionaryEntry entry in dictionary)
             {
                 if (entry.Key is string key)
                 {
+                    if (count++ == SafeCollectionPolicy.MaximumElements)
+                    {
+                        break;
+                    }
+
                     copy[key] = SnapshotValue(entry.Value, depth + 1);
                 }
             }
@@ -149,11 +168,17 @@ public sealed record ActivitySnapshot(
             return new ReadOnlyDictionary<string, object?>(copy);
         }
 
-        if (value is IEnumerable sequence)
+        if (value is IEnumerable sequence && SafeCollectionPolicy.IsSafeSequence(value))
         {
             List<object?> copy = [];
+            int count = 0;
             foreach (object? item in sequence)
             {
+                if (count++ == SafeCollectionPolicy.MaximumElements)
+                {
+                    break;
+                }
+
                 copy.Add(SnapshotValue(item, depth + 1));
             }
 

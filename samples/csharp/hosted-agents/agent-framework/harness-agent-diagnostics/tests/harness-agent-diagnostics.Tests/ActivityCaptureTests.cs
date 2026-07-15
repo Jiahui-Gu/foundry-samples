@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Diagnostics;
 using System.Text.Json;
 using HarnessAgentDiagnostics;
@@ -98,5 +99,38 @@ public sealed class ActivityCaptureTests
         Assert.NotEqual(default, snapshots[0].TraceId);
         Assert.NotEqual(default, snapshots[0].SpanId);
         Assert.True(capture.Drain().Count == 0);
+    }
+
+    [Fact]
+    public void Drain_LeavesCustomActivityTagEnumerablesOpaqueWithoutInvokingEnumerator()
+    {
+        using ActivityCapture capture = new("harness-custom-enumerable-tests");
+        using ActivitySource source = new("harness-custom-enumerable-tests");
+        ThrowingEnumerable tagValue = new();
+
+        using (Activity? activity = source.StartActivity("custom-tag"))
+        {
+            Assert.NotNull(activity);
+            activity.SetTag("custom.values", tagValue);
+        }
+
+        ActivitySnapshot snapshot = Assert.Single(capture.Drain());
+
+        Assert.False(tagValue.EnumeratorInvoked);
+        ActivityOpaqueValue opaqueValue = Assert.IsType<ActivityOpaqueValue>(snapshot.Tags["custom.values"]);
+        Assert.Equal(typeof(ThrowingEnumerable).FullName, opaqueValue.Type);
+    }
+
+    private sealed class ThrowingEnumerable : IEnumerable<string>
+    {
+        public bool EnumeratorInvoked { get; private set; }
+
+        public IEnumerator<string> GetEnumerator()
+        {
+            EnumeratorInvoked = true;
+            throw new InvalidOperationException("must not enumerate custom iterables");
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }

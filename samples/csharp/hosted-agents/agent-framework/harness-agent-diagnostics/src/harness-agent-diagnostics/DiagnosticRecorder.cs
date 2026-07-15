@@ -18,6 +18,7 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly Dictionary<string, StreamWriter> _writers = new(StringComparer.Ordinal);
     private readonly SensitiveValueSanitizer _sanitizer;
+    private readonly Func<CancellationToken, Task>? _beforeWriteAsync;
     private TaskCompletionSource? _operationsDrained;
     private Task? _disposeTask;
     private bool _disposeStarted;
@@ -25,6 +26,14 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
     private long _nextRecordSequence;
 
     public DiagnosticRecorder(string outputDirectory, IEnumerable<string>? sensitiveValues = null)
+        : this(outputDirectory, sensitiveValues, null)
+    {
+    }
+
+    internal DiagnosticRecorder(
+        string outputDirectory,
+        IEnumerable<string>? sensitiveValues,
+        Func<CancellationToken, Task>? beforeWriteAsync)
     {
         if (string.IsNullOrWhiteSpace(outputDirectory))
         {
@@ -34,6 +43,7 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
         OutputDirectory = outputDirectory;
         Directory.CreateDirectory(OutputDirectory);
         _sanitizer = new SensitiveValueSanitizer(sensitiveValues);
+        _beforeWriteAsync = beforeWriteAsync;
     }
 
     public string OutputDirectory { get; }
@@ -125,6 +135,11 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
     {
         try
         {
+            if (_beforeWriteAsync is not null)
+            {
+                await _beforeWriteAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
@@ -221,13 +236,20 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
             return new JsonObject { ["type"] = type.FullName };
         }
 
-        if (value is IDictionary dictionary)
+        if (value is IDictionary dictionary && SafeCollectionPolicy.IsSafeDictionary(value))
         {
             JsonObject result = new();
+            int count = 0;
             foreach (DictionaryEntry entry in dictionary)
             {
                 if (entry.Key is string key && !IsExcludedProperty(key))
                 {
+                    if (count++ == SafeCollectionPolicy.MaximumElements)
+                    {
+                        result["truncated"] = true;
+                        break;
+                    }
+
                     result[key] = CreateSafeNode(entry.Value, depth + 1);
                 }
             }
@@ -235,13 +257,13 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
             return result;
         }
 
-        if (value is IEnumerable sequence)
+        if (value is IEnumerable sequence && SafeCollectionPolicy.IsSafeSequence(value))
         {
             JsonArray result = [];
             int count = 0;
             foreach (object? item in sequence)
             {
-                if (count++ == 100)
+                if (count++ == SafeCollectionPolicy.MaximumElements)
                 {
                     result.Add(new JsonObject { ["truncated"] = true });
                     break;
@@ -251,6 +273,11 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
             }
 
             return result;
+        }
+
+        if (value is IDictionary or IEnumerable)
+        {
+            return new JsonObject { ["type"] = type.FullName };
         }
 
         JsonObject properties = new();
@@ -324,13 +351,13 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
             {
                 entry.Key,
                 entry.Value,
-            }),
+            }).ToArray(),
             events = activity.Events.Select(activityEvent => new
             {
                 activityEvent.Name,
                 activityEvent.Timestamp,
                 tags = activityEvent.Tags.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
-            }),
+            }).ToArray(),
             links = activity.Links.Select(link => new
             {
                 traceId = link.TraceId.ToHexString(),
@@ -338,7 +365,7 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
                 link.TraceFlags,
                 link.TraceState,
                 tags = link.Tags.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
-            }),
+            }).ToArray(),
         };
     }
 }
