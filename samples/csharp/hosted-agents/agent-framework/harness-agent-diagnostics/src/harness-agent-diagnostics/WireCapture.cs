@@ -36,6 +36,11 @@ internal sealed class WireCaptureException : Exception
     internal ImmutableArray<string> Markers { get; }
 }
 
+internal enum WireCapturePublishCheckpoint
+{
+    PreviousBundleMovedToBackup,
+}
+
 internal static class WireCapture
 {
     internal const string SseFileName = "hosted-responses.sse";
@@ -50,11 +55,28 @@ internal static class WireCapture
         Store exactly this in memory: label=maf-probe; values=3,1,4.
         Make exactly one compute_probe call with [3,1,4], complete the todo, and return compact final JSON.
         """;
+    private const string OwnedArtifactSignature =
+        "HarnessAgentDiagnostics.WireCapture.OwnedArtifact/v1";
 
+    /// <summary>
+    /// Captures into <paramref name="outputDirectory"/>, which is a dedicated bundle directory
+    /// replaced as a whole after both success files are closed and validated.
+    /// </summary>
     internal static async Task<WireCaptureSummary> CaptureAsync(
         Uri baseUrl,
         string outputDirectory,
         CancellationToken cancellationToken = default)
+        => await CaptureAsync(
+            baseUrl,
+            outputDirectory,
+            publishCheckpoint: null,
+            cancellationToken).ConfigureAwait(false);
+
+    internal static async Task<WireCaptureSummary> CaptureAsync(
+        Uri baseUrl,
+        string outputDirectory,
+        Action<WireCapturePublishCheckpoint>? publishCheckpoint,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(baseUrl);
         if (string.IsNullOrWhiteSpace(outputDirectory))
@@ -63,10 +85,9 @@ internal static class WireCapture
         }
 
         Uri validatedUrl = LoopbackHttpUrl.Parse(baseUrl.AbsoluteUri);
-        Directory.CreateDirectory(outputDirectory);
-        EvidencePaths paths = EvidencePaths.Create(outputDirectory);
-        DeleteEvidence(paths.AllFinalPaths);
-        DeleteOwnedTemporaryFiles(outputDirectory);
+        BundlePaths paths = BundlePaths.Create(outputDirectory);
+        Directory.CreateDirectory(paths.Parent);
+        RecoverAndCleanOwnedArtifacts(paths);
 
         using SocketsHttpHandler handler = CreateHttpHandler();
         using HttpClient client = new(handler)
@@ -83,68 +104,62 @@ internal static class WireCapture
                 "application/json"),
         };
 
+        using HttpResponseMessage response = await client.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken).ConfigureAwait(false);
+        string mediaType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
+        if (!response.IsSuccessStatusCode)
+        {
+            string excerpt = await ReadSafeExcerptAsync(response.Content, cancellationToken)
+                .ConfigureAwait(false);
+            throw new WireCaptureException(
+                $"Responses endpoint returned HTTP {(int)response.StatusCode}. Body excerpt: {excerpt}",
+                response.StatusCode,
+                ["http-status"]);
+        }
+
+        if (!mediaType.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase))
+        {
+            string excerpt = await ReadSafeExcerptAsync(response.Content, cancellationToken)
+                .ConfigureAwait(false);
+            throw new WireCaptureException(
+                $"Responses endpoint returned an unexpected content type. Body excerpt: {excerpt}",
+                response.StatusCode,
+                ["content-type"]);
+        }
+
+        SanitizedCapture capture;
         try
         {
-            using HttpResponseMessage response = await client.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken).ConfigureAwait(false);
-            string mediaType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
-            if (!response.IsSuccessStatusCode)
-            {
-                string excerpt = await ReadSafeExcerptAsync(response.Content, cancellationToken)
-                    .ConfigureAwait(false);
-                throw new WireCaptureException(
-                    $"Responses endpoint returned HTTP {(int)response.StatusCode}. Body excerpt: {excerpt}",
-                    response.StatusCode,
-                    ["http-status"]);
-            }
-
-            if (!mediaType.Equals("text/event-stream", StringComparison.OrdinalIgnoreCase))
-            {
-                string excerpt = await ReadSafeExcerptAsync(response.Content, cancellationToken)
-                    .ConfigureAwait(false);
-                throw new WireCaptureException(
-                    $"Responses endpoint returned an unexpected content type. Body excerpt: {excerpt}",
-                    response.StatusCode,
-                    ["content-type"]);
-            }
-
-            SanitizedCapture capture;
-            try
-            {
-                await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken)
-                    .ConfigureAwait(false);
-                capture = await ReadCaptureAsync(stream, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception exception) when (exception is IOException or HttpRequestException)
-            {
-                throw new WireCaptureException(
-                    "Responses SSE stream failed before completion.",
-                    response.StatusCode,
-                    ["stream-failure"],
-                    exception);
-            }
-
-            WireCaptureSummary summary = CreateSummary(response.StatusCode, mediaType, capture);
-            bool succeeded = summary.FailureMarkers.IsEmpty && summary.MissingMarkers.IsEmpty;
-            await WriteEvidenceAtomicallyAsync(paths, capture, summary, succeeded, cancellationToken)
+            await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken)
                 .ConfigureAwait(false);
-            return summary;
+            capture = await ReadCaptureAsync(stream, cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (OperationCanceledException)
         {
-            DeleteEvidence(paths.AllFinalPaths);
             throw;
         }
-        finally
+        catch (Exception exception) when (exception is IOException or HttpRequestException)
         {
-            DeleteOwnedTemporaryFiles(outputDirectory);
+            throw new WireCaptureException(
+                "Responses SSE stream failed before completion.",
+                response.StatusCode,
+                ["stream-failure"],
+                exception);
         }
+
+        WireCaptureSummary summary = CreateSummary(response.StatusCode, mediaType, capture);
+        bool succeeded = summary.FailureMarkers.IsEmpty && summary.MissingMarkers.IsEmpty;
+        await WriteAndPublishEvidenceAsync(
+            paths,
+            capture,
+            summary,
+            succeeded,
+            publishCheckpoint,
+            cancellationToken)
+            .ConfigureAwait(false);
+        return summary;
     }
 
     internal static SocketsHttpHandler CreateHttpHandler()
@@ -182,7 +197,13 @@ internal static class WireCapture
             {
                 if (fields.Count > 0)
                 {
-                    ProcessBlock(fields, dispatchData: true, sanitizer, state, blocks, events);
+                    ProcessBlock(
+                        fields,
+                        terminatedByBlankLine: true,
+                        sanitizer,
+                        state,
+                        blocks,
+                        events);
                     fields.Clear();
                 }
 
@@ -211,7 +232,13 @@ internal static class WireCapture
 
         if (fields.Count > 0)
         {
-            ProcessBlock(fields, dispatchData: false, sanitizer, state, blocks, events);
+            ProcessBlock(
+                fields,
+                terminatedByBlankLine: false,
+                sanitizer,
+                state,
+                blocks,
+                events);
         }
 
         return new SanitizedCapture(
@@ -224,7 +251,7 @@ internal static class WireCapture
 
     private static void ProcessBlock(
         List<SseField> fields,
-        bool dispatchData,
+        bool terminatedByBlankLine,
         SensitiveValueSanitizer sanitizer,
         CaptureState state,
         ImmutableArray<SanitizedSseBlock>.Builder blocks,
@@ -243,10 +270,10 @@ internal static class WireCapture
                 case "event":
                     eventValue = field.Value;
                     break;
-                case "id" when !field.Value.Contains('\0'):
+                case "id" when terminatedByBlankLine && !field.Value.Contains('\0'):
                     state.LastEventId = field.Value;
                     break;
-                case "retry" when IsValidRetry(field.Value):
+                case "retry" when terminatedByBlankLine && IsValidRetry(field.Value):
                     state.Retry = field.Value;
                     break;
                 case "data":
@@ -274,8 +301,10 @@ internal static class WireCapture
             sanitizedFields.Add(new SseField(field.Name, value));
         }
 
-        blocks.Add(new SanitizedSseBlock(sanitizedFields.ToImmutable()));
-        if (!dispatchData || dataLines.Count == 0)
+        blocks.Add(new SanitizedSseBlock(
+            sanitizedFields.ToImmutable(),
+            terminatedByBlankLine));
+        if (!terminatedByBlankLine || dataLines.Count == 0)
         {
             return;
         }
@@ -407,48 +436,129 @@ internal static class WireCapture
             missing.ToImmutable());
     }
 
-    private static async Task WriteEvidenceAtomicallyAsync(
-        EvidencePaths paths,
+    private static async Task WriteAndPublishEvidenceAsync(
+        BundlePaths paths,
         SanitizedCapture capture,
         WireCaptureSummary summary,
         bool succeeded,
+        Action<WireCapturePublishCheckpoint>? publishCheckpoint,
         CancellationToken cancellationToken)
     {
-        string suffix = Guid.NewGuid().ToString("N");
-        string temporarySsePath = Path.Combine(
-            paths.Directory,
-            $".hosted-responses.{suffix}.tmp.sse");
-        string temporaryEventsPath = Path.Combine(
-            paths.Directory,
-            $".hosted-responses-events.{suffix}.tmp.jsonl");
-        string targetSsePath = succeeded ? paths.Sse : paths.FailedSse;
-        string targetEventsPath = succeeded ? paths.Events : paths.FailedEvents;
+        string destination = succeeded ? paths.Final : paths.Failed;
+        string staging = CreateOwnedArtifactPath(destination, "staging");
+        string sseFileName = succeeded ? SseFileName : FailedSseFileName;
+        string eventsFileName = succeeded ? EventsFileName : FailedEventsFileName;
+        string stagedSsePath = Path.Combine(staging, sseFileName);
+        string stagedEventsPath = Path.Combine(staging, eventsFileName);
         (string sse, string jsonl) = RenderEvidence(capture, summary, succeeded);
+
+        CreateOwnedArtifactMarker(staging);
+        try
+        {
+            Directory.CreateDirectory(staging);
+            await WriteAndFlushAsync(stagedSsePath, sse, cancellationToken)
+                .ConfigureAwait(false);
+            await WriteAndFlushAsync(stagedEventsPath, jsonl, cancellationToken)
+                .ConfigureAwait(false);
+            ValidateStagedEvidence(
+                staging,
+                stagedSsePath,
+                stagedEventsPath,
+                sse,
+                jsonl);
+            PublishBundle(staging, destination, publishCheckpoint);
+        }
+        finally
+        {
+            DeleteOwnedArtifact(staging);
+        }
+    }
+
+    private static void ValidateStagedEvidence(
+        string staging,
+        string ssePath,
+        string eventsPath,
+        string expectedSse,
+        string expectedJsonl)
+    {
+        string[] expectedFiles = [Path.GetFileName(eventsPath), Path.GetFileName(ssePath)];
+        string[] actualFiles = Directory.EnumerateFiles(staging)
+            .Select(path => Path.GetFileName(path)!)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Array.Sort(expectedFiles, StringComparer.Ordinal);
+        if (!actualFiles.SequenceEqual(expectedFiles, StringComparer.Ordinal)
+            || File.ReadAllText(ssePath) != expectedSse
+            || File.ReadAllText(eventsPath) != expectedJsonl)
+        {
+            throw new IOException("Staged wire capture evidence failed validation.");
+        }
+
+        foreach (string line in File.ReadLines(eventsPath))
+        {
+            if (line.Length == 0)
+            {
+                throw new IOException("Staged wire capture JSONL contains an empty record.");
+            }
+
+            using JsonDocument document = JsonDocument.Parse(line);
+        }
+    }
+
+    private static void PublishBundle(
+        string staging,
+        string destination,
+        Action<WireCapturePublishCheckpoint>? publishCheckpoint)
+    {
+        string backup = CreateOwnedArtifactPath(destination, "backup");
+        bool previousBundleMoved = false;
+        bool stagingBundleMoved = false;
 
         try
         {
-            await WriteAndFlushAsync(temporarySsePath, sse, cancellationToken)
-                .ConfigureAwait(false);
-            await WriteAndFlushAsync(temporaryEventsPath, jsonl, cancellationToken)
-                .ConfigureAwait(false);
-            File.Move(temporarySsePath, targetSsePath, overwrite: true);
-            try
+            if (Directory.Exists(destination))
             {
-                File.Move(temporaryEventsPath, targetEventsPath, overwrite: true);
+                CreateOwnedArtifactMarker(backup);
+                Directory.Move(destination, backup);
+                previousBundleMoved = true;
+                publishCheckpoint?.Invoke(
+                    WireCapturePublishCheckpoint.PreviousBundleMovedToBackup);
             }
-            catch
+
+            Directory.Move(staging, destination);
+            stagingBundleMoved = true;
+
+            if (previousBundleMoved)
             {
-                DeleteEvidence(targetSsePath);
-                throw;
+                Directory.Delete(backup, recursive: true);
+                DeleteOwnedArtifactMarker(backup);
             }
         }
-        catch
+        catch (Exception publishException)
         {
-            DeleteEvidence(
-                temporarySsePath,
-                temporaryEventsPath,
-                targetSsePath,
-                targetEventsPath);
+            try
+            {
+                if (stagingBundleMoved && Directory.Exists(destination))
+                {
+                    Directory.Move(destination, staging);
+                }
+
+                if (previousBundleMoved
+                    && Directory.Exists(backup)
+                    && !Directory.Exists(destination))
+                {
+                    Directory.Move(backup, destination);
+                }
+
+                DeleteOwnedArtifactMarker(backup);
+            }
+            catch (Exception recoveryException)
+            {
+                throw new IOException(
+                    "Wire capture bundle publication and recovery failed.",
+                    new AggregateException(publishException, recoveryException));
+            }
+
             throw;
         }
     }
@@ -493,7 +603,11 @@ internal static class WireCapture
                 ["done"] = summary.Done,
             };
             string renderedSummary = failureSummary.ToJsonString(JsonOptions);
-            sse.Append(": capture-failure ").AppendLine(renderedSummary).AppendLine();
+            if (capture.Blocks.IsEmpty || capture.Blocks[^1].TerminatedByBlankLine)
+            {
+                sse.Append(": capture-failure ").AppendLine(renderedSummary).AppendLine();
+            }
+
             jsonl.AppendLine(renderedSummary);
         }
 
@@ -514,7 +628,10 @@ internal static class WireCapture
             }
         }
 
-        output.AppendLine();
+        if (block.TerminatedByBlankLine)
+        {
+            output.AppendLine();
+        }
     }
 
     private static async Task WriteAndFlushAsync(
@@ -632,27 +749,144 @@ internal static class WireCapture
     private static string TrimSingleLeadingSpace(string value)
         => value.StartsWith(' ') ? value[1..] : value;
 
-    private static void DeleteEvidence(params string[] paths)
+    private static void RecoverAndCleanOwnedArtifacts(BundlePaths paths)
     {
-        foreach (string path in paths)
+        RecoverOwnedBackup(paths.Final);
+        RecoverOwnedBackup(paths.Failed);
+        DeleteOwnedArtifacts(paths.Final, "staging");
+        DeleteOwnedArtifacts(paths.Failed, "staging");
+    }
+
+    private static void RecoverOwnedBackup(string destination)
+    {
+        List<OwnedArtifact> backups = EnumerateOwnedArtifacts(destination, "backup")
+            .OrderByDescending(artifact => File.GetLastWriteTimeUtc(artifact.Marker))
+            .ToList();
+        if (!Directory.Exists(destination))
         {
-            if (File.Exists(path))
+            OwnedArtifact? backup = backups.FirstOrDefault(
+                artifact => Directory.Exists(artifact.Path));
+            if (backup is not null)
             {
-                File.Delete(path);
+                Directory.Move(backup.Path, destination);
+                DeleteOwnedArtifactMarker(backup.Path);
+                backups.Remove(backup);
+            }
+        }
+
+        foreach (OwnedArtifact backup in backups)
+        {
+            DeleteOwnedArtifact(backup.Path);
+        }
+    }
+
+    private static void DeleteOwnedArtifacts(string destination, string kind)
+    {
+        foreach (OwnedArtifact artifact in EnumerateOwnedArtifacts(destination, kind))
+        {
+            DeleteOwnedArtifact(artifact.Path);
+        }
+    }
+
+    private static IEnumerable<OwnedArtifact> EnumerateOwnedArtifacts(
+        string destination,
+        string kind)
+    {
+        string parent = Path.GetDirectoryName(destination)!;
+        string prefix = Path.GetFileName(destination) + "." + kind + ".";
+        foreach (string marker in Directory.EnumerateFiles(parent, prefix + "*.owned"))
+        {
+            string markerName = Path.GetFileName(marker);
+            const string markerSuffix = ".owned";
+            if (markerName.Length != prefix.Length + 32 + markerSuffix.Length
+                || !markerName.StartsWith(prefix, StringComparison.Ordinal)
+                || !markerName.EndsWith(markerSuffix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string identifier = markerName.Substring(prefix.Length, 32);
+            if (!Guid.TryParseExact(identifier, "N", out _))
+            {
+                continue;
+            }
+
+            string artifactPath = marker[..^markerSuffix.Length];
+            string expectedMarker =
+                OwnedArtifactSignature + Environment.NewLine + Path.GetFullPath(artifactPath);
+            string actualMarker;
+            try
+            {
+                actualMarker = File.ReadAllText(marker);
+            }
+            catch (IOException)
+            {
+                continue;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            if (actualMarker.Equals(expectedMarker, StringComparison.Ordinal))
+            {
+                yield return new OwnedArtifact(artifactPath, marker);
             }
         }
     }
 
-    private static void DeleteOwnedTemporaryFiles(string directory)
+    private static string CreateOwnedArtifactPath(string destination, string kind)
+        => destination + "." + kind + "." + Guid.NewGuid().ToString("N");
+
+    private static void CreateOwnedArtifactMarker(string artifactPath)
     {
-        if (!Directory.Exists(directory))
+        string markerPath = OwnedArtifactMarker(artifactPath);
+        using FileStream stream = new(
+            markerPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 1024,
+            FileOptions.WriteThrough);
+        using StreamWriter writer = new(
+            stream,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            bufferSize: 1024,
+            leaveOpen: true);
+        writer.Write(
+            OwnedArtifactSignature + Environment.NewLine + Path.GetFullPath(artifactPath));
+        writer.Flush();
+        stream.Flush(flushToDisk: true);
+    }
+
+    private static string OwnedArtifactMarker(string artifactPath)
+        => artifactPath + ".owned";
+
+    private static void DeleteOwnedArtifact(string artifactPath)
+    {
+        if (Directory.Exists(artifactPath))
         {
-            return;
+            Directory.Delete(artifactPath, recursive: true);
         }
 
-        foreach (string path in Directory.EnumerateFiles(directory, ".hosted-responses*.tmp.*"))
+        DeleteOwnedArtifactMarker(artifactPath);
+    }
+
+    private static void DeleteOwnedArtifactMarker(string artifactPath)
+    {
+        string marker = OwnedArtifactMarker(artifactPath);
+        try
         {
-            File.Delete(path);
+            if (File.Exists(marker))
+            {
+                File.Delete(marker);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 
@@ -675,27 +909,33 @@ internal static class WireCapture
             ImmutableArray.CreateBuilder<string>();
     }
 
-    private sealed record EvidencePaths(
-        string Directory,
-        string Sse,
-        string Events,
-        string FailedSse,
-        string FailedEvents)
+    private sealed record BundlePaths(
+        string Parent,
+        string Final,
+        string Failed)
     {
-        internal string[] AllFinalPaths => [Sse, Events, FailedSse, FailedEvents];
+        internal static BundlePaths Create(string directory)
+        {
+            string final = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+            string? parent = Path.GetDirectoryName(final);
+            if (parent is null || Path.GetFileName(final).Length == 0)
+            {
+                throw new ArgumentException(
+                    "Output directory must be a dedicated capture bundle with a parent directory.",
+                    nameof(directory));
+            }
 
-        internal static EvidencePaths Create(string directory)
-            => new(
-                directory,
-                Path.Combine(directory, SseFileName),
-                Path.Combine(directory, EventsFileName),
-                Path.Combine(directory, FailedSseFileName),
-                Path.Combine(directory, FailedEventsFileName));
+            return new BundlePaths(parent, final, final + ".failed");
+        }
     }
+
+    private sealed record OwnedArtifact(string Path, string Marker);
 
     private sealed record SseField(string Name, string Value);
 
-    private sealed record SanitizedSseBlock(ImmutableArray<SseField> Fields);
+    private sealed record SanitizedSseBlock(
+        ImmutableArray<SseField> Fields,
+        bool TerminatedByBlankLine);
 
     private sealed record SanitizedSseEvent(
         int Sequence,
