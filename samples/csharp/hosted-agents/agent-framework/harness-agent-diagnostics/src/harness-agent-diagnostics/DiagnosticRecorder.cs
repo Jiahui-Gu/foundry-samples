@@ -62,7 +62,7 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
             throw new ArgumentException("Agent response updates must be recorded with the strongly typed update method.", nameof(providerState));
         }
 
-        return WriteAsync(ProviderStateFileName, () => providerState, cancellationToken);
+        return WriteAsync(ProviderStateFileName, () => new { providerState }, cancellationToken);
     }
 
     public Task RecordActivityAsync(ActivitySnapshot activity, CancellationToken cancellationToken = default)
@@ -208,6 +208,17 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
         if (value is JsonNode node)
         {
             return node.DeepClone();
+        }
+
+        if (value is CompleteActivitySequence completeActivitySequence)
+        {
+            JsonArray completeResult = [];
+            foreach (object item in completeActivitySequence.Values)
+            {
+                completeResult.Add(CreateSafeNode(item, depth + 1));
+            }
+
+            return completeResult;
         }
 
         Type type = value.GetType();
@@ -375,7 +386,7 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
         }
 
         return SafeCollectionPolicy.IsSafeDictionary(tags)
-            ? tags.Select(entry => ProjectSemanticEntry(entry.Key, entry.Value)).ToArray()
+            ? new CompleteActivitySequence(tags.Select(entry => ProjectSemanticEntry(entry.Key, entry.Value)).ToArray())
             : new ActivityOpaqueValue(tags.GetType().FullName);
     }
 
@@ -391,8 +402,10 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
 
     private static object ProjectActivitySequence<T>(IReadOnlyList<T> values, Func<T, object> project)
         => SafeCollectionPolicy.IsSafeSequence(values)
-            ? values.Select(project).ToArray()
+            ? new CompleteActivitySequence(values.Select(project).ToArray())
             : new ActivityOpaqueValue(values.GetType().FullName);
+
+    private sealed record CompleteActivitySequence(IReadOnlyList<object> Values);
 
     private static string[] CopySensitiveValues(string[]? sensitiveValues)
         => sensitiveValues?
@@ -439,7 +452,7 @@ internal sealed partial class SensitiveValueSanitizer
                     && child is JsonValue continuationValue
                     && continuationValue.TryGetValue<string>(out string? tokenValue))
                 {
-                    obj[name] = JsonValue.Create(GetAlias("continuation-token", tokenValue));
+                    obj[name] = JsonValue.Create(SanitizeString(tokenValue, propertyName));
                     continue;
                 }
 
@@ -525,10 +538,15 @@ internal sealed partial class SensitiveValueSanitizer
 
     private string SanitizeString(string text, string? propertyName)
     {
+        if (_registeredValues.Contains(text, StringComparer.Ordinal))
+        {
+            return GetRegisteredAlias(text);
+        }
+
         string sanitized = text;
         foreach (string registeredValue in _registeredValues)
         {
-            sanitized = sanitized.Replace(registeredValue, GetAlias("sensitive", registeredValue), StringComparison.Ordinal);
+            sanitized = sanitized.Replace(registeredValue, GetRegisteredAlias(registeredValue), StringComparison.Ordinal);
         }
 
         if (IsContinuationTokenProperty(propertyName))
@@ -564,9 +582,57 @@ internal sealed partial class SensitiveValueSanitizer
             return alias;
         }
 
-        alias = $"{category}-{++_nextAlias}";
+        alias = CreateCollisionSafeAlias(ordinal => $"{category}-{ordinal}");
         _aliases.Add(value, alias);
         return alias;
+    }
+
+    private string GetRegisteredAlias(string value)
+    {
+        if (_aliases.TryGetValue(value, out string? alias))
+        {
+            return alias;
+        }
+
+        alias = CreateCollisionSafeAlias(ordinal => $"[REDACTED-REGISTERED-{ordinal}]");
+        _aliases.Add(value, alias);
+        return alias;
+    }
+
+    private string CreateCollisionSafeAlias(Func<int, string> aliasFactory)
+    {
+        for (int attempt = 0; attempt <= _registeredValues.Count; attempt++)
+        {
+            string candidate = aliasFactory(++_nextAlias);
+            if (_registeredValues.All(value => !candidate.Contains(value, StringComparison.Ordinal)))
+            {
+                return candidate;
+            }
+        }
+
+        char marker = FindCollisionSafeRedactionMarker();
+        return new string(marker, ++_nextAlias + 3);
+    }
+
+    private char FindCollisionSafeRedactionMarker()
+    {
+        foreach (char marker in "█▓▒░■●◆")
+        {
+            if (_registeredValues.All(value => !value.Contains(marker, StringComparison.Ordinal)))
+            {
+                return marker;
+            }
+        }
+
+        for (char marker = '\uE000'; marker < '\uF8FF'; marker++)
+        {
+            if (_registeredValues.All(value => !value.Contains(marker, StringComparison.Ordinal)))
+            {
+                return marker;
+            }
+        }
+
+        throw new InvalidOperationException("Unable to create a collision-safe registered-value alias.");
     }
 
     private static string GetOpenAiIdentifierCategory(string value)
