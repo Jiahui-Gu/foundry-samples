@@ -71,6 +71,13 @@ internal static class ProbeApplication
 
                     WireCaptureSummary wireSummary = await runCaptureWireAsync(capture, cancellationToken)
                         .ConfigureAwait(false);
+                    if (!wireSummary.CleanupWarnings.IsDefaultOrEmpty)
+                    {
+                        await error.WriteLineAsync(
+                            $"Wire capture cleanup warning: markers={string.Join(",", wireSummary.CleanupWarnings)}")
+                            .ConfigureAwait(false);
+                    }
+
                     if (!wireSummary.FailureMarkers.IsEmpty || !wireSummary.MissingMarkers.IsEmpty)
                     {
                         string markers = string.Join(

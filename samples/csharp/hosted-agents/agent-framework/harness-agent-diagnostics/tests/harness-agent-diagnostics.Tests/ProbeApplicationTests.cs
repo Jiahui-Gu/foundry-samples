@@ -169,12 +169,55 @@ public sealed class ProbeApplicationTests
                 Done: false,
                 Completed: false,
                 ImmutableArray.Create("malformed-json"),
-                ImmutableArray.Create("missing-response-completed"))));
+                ImmutableArray.Create("missing-response-completed"))
+            {
+                CleanupWarnings = ImmutableArray.Create("backup-cleanup-failed"),
+            }));
 
         Assert.NotEqual(0, exitCode);
         Assert.Empty(output.ToString());
         Assert.Contains("malformed-json", error.ToString(), StringComparison.Ordinal);
         Assert.Contains("missing-response-completed", error.ToString(), StringComparison.Ordinal);
+        Assert.Contains(
+            "Wire capture cleanup warning: markers=backup-cleanup-failed",
+            error.ToString(),
+            StringComparison.Ordinal);
         Assert.DoesNotContain("complete:", error.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RunAsync_SurfacesCleanupWarningWithoutFailingCommittedCapture()
+    {
+        StringWriter output = new();
+        StringWriter error = new();
+
+        int exitCode = await ProbeApplication.RunAsync(
+            ["capture-wire"],
+            output,
+            error,
+            (_, _) => throw new InvalidOperationException("probe must not run"),
+            (_, _, _) => throw new InvalidOperationException("serve must not run"),
+            (_, _) => Task.FromResult(
+                new WireCaptureSummary(
+                    HttpStatusCode.OK,
+                    "text/event-stream",
+                    1,
+                    ImmutableArray.Create("response.completed"),
+                    ImmutableArray.Create("response.completed"),
+                    Done: false,
+                    Completed: true,
+                    ImmutableArray<string>.Empty,
+                    ImmutableArray<string>.Empty)
+                {
+                    CleanupWarnings = ImmutableArray.Create("backup-cleanup-failed"),
+                }));
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("Wire capture complete:", output.ToString(), StringComparison.Ordinal);
+        Assert.Contains(
+            "Wire capture cleanup warning: markers=backup-cleanup-failed",
+            error.ToString(),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("Wire capture failed:", error.ToString(), StringComparison.Ordinal);
     }
 }

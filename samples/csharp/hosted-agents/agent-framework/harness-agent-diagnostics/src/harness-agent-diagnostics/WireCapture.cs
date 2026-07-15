@@ -16,7 +16,10 @@ internal sealed record WireCaptureSummary(
     bool Done,
     bool Completed,
     ImmutableArray<string> FailureMarkers,
-    ImmutableArray<string> MissingMarkers);
+    ImmutableArray<string> MissingMarkers)
+{
+    internal ImmutableArray<string> CleanupWarnings { get; init; } = [];
+}
 
 internal sealed class WireCaptureException : Exception
 {
@@ -38,6 +41,7 @@ internal sealed class WireCaptureException : Exception
 
 internal enum WireCapturePublishCheckpoint
 {
+    StagingDirectoryCreated,
     PreviousBundleMovedToBackup,
 }
 
@@ -151,7 +155,7 @@ internal static class WireCapture
 
         WireCaptureSummary summary = CreateSummary(response.StatusCode, mediaType, capture);
         bool succeeded = summary.FailureMarkers.IsEmpty && summary.MissingMarkers.IsEmpty;
-        await WriteAndPublishEvidenceAsync(
+        ImmutableArray<string> cleanupWarnings = await WriteAndPublishEvidenceAsync(
             paths,
             capture,
             summary,
@@ -159,7 +163,7 @@ internal static class WireCapture
             publishCheckpoint,
             cancellationToken)
             .ConfigureAwait(false);
-        return summary;
+        return summary with { CleanupWarnings = cleanupWarnings };
     }
 
     internal static SocketsHttpHandler CreateHttpHandler()
@@ -208,11 +212,6 @@ internal static class WireCapture
                 }
 
                 continue;
-            }
-
-            if (state.Done)
-            {
-                AddDistinct(state.Failures, "content-after-done");
             }
 
             if (line[0] == ':')
@@ -330,6 +329,11 @@ internal static class WireCapture
             AddDistinct(state.Failures, sanitizedData.Failure);
         }
 
+        if (state.Done)
+        {
+            AddDistinct(state.Failures, "content-after-done");
+        }
+
         bool isCompletion =
             effectiveEventName.Equals("response.completed", StringComparison.Ordinal)
             || sanitizedData.DataType?.Equals("response.completed", StringComparison.Ordinal) == true;
@@ -436,7 +440,7 @@ internal static class WireCapture
             missing.ToImmutable());
     }
 
-    private static async Task WriteAndPublishEvidenceAsync(
+    private static async Task<ImmutableArray<string>> WriteAndPublishEvidenceAsync(
         BundlePaths paths,
         SanitizedCapture capture,
         WireCaptureSummary summary,
@@ -452,10 +456,11 @@ internal static class WireCapture
         string stagedEventsPath = Path.Combine(staging, eventsFileName);
         (string sse, string jsonl) = RenderEvidence(capture, summary, succeeded);
 
-        CreateOwnedArtifactMarker(staging);
         try
         {
             Directory.CreateDirectory(staging);
+            publishCheckpoint?.Invoke(WireCapturePublishCheckpoint.StagingDirectoryCreated);
+            CreateOwnedArtifactMarker(staging);
             await WriteAndFlushAsync(stagedSsePath, sse, cancellationToken)
                 .ConfigureAwait(false);
             await WriteAndFlushAsync(stagedEventsPath, jsonl, cancellationToken)
@@ -466,7 +471,7 @@ internal static class WireCapture
                 stagedEventsPath,
                 sse,
                 jsonl);
-            PublishBundle(staging, destination, publishCheckpoint);
+            return PublishBundle(staging, destination, publishCheckpoint);
         }
         finally
         {
@@ -505,14 +510,13 @@ internal static class WireCapture
         }
     }
 
-    private static void PublishBundle(
+    private static ImmutableArray<string> PublishBundle(
         string staging,
         string destination,
         Action<WireCapturePublishCheckpoint>? publishCheckpoint)
     {
         string backup = CreateOwnedArtifactPath(destination, "backup");
         bool previousBundleMoved = false;
-        bool stagingBundleMoved = false;
 
         try
         {
@@ -526,23 +530,11 @@ internal static class WireCapture
             }
 
             Directory.Move(staging, destination);
-            stagingBundleMoved = true;
-
-            if (previousBundleMoved)
-            {
-                Directory.Delete(backup, recursive: true);
-                DeleteOwnedArtifactMarker(backup);
-            }
         }
         catch (Exception publishException)
         {
             try
             {
-                if (stagingBundleMoved && Directory.Exists(destination))
-                {
-                    Directory.Move(destination, staging);
-                }
-
                 if (previousBundleMoved
                     && Directory.Exists(backup)
                     && !Directory.Exists(destination))
@@ -560,6 +552,22 @@ internal static class WireCapture
             }
 
             throw;
+        }
+
+        if (!previousBundleMoved)
+        {
+            return [];
+        }
+
+        try
+        {
+            return DeleteOwnedArtifact(backup)
+                ? []
+                : ["backup-cleanup-failed"];
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return ["backup-cleanup-failed"];
         }
     }
 
@@ -862,17 +870,17 @@ internal static class WireCapture
     private static string OwnedArtifactMarker(string artifactPath)
         => artifactPath + ".owned";
 
-    private static void DeleteOwnedArtifact(string artifactPath)
+    private static bool DeleteOwnedArtifact(string artifactPath)
     {
         if (Directory.Exists(artifactPath))
         {
             Directory.Delete(artifactPath, recursive: true);
         }
 
-        DeleteOwnedArtifactMarker(artifactPath);
+        return DeleteOwnedArtifactMarker(artifactPath);
     }
 
-    private static void DeleteOwnedArtifactMarker(string artifactPath)
+    private static bool DeleteOwnedArtifactMarker(string artifactPath)
     {
         string marker = OwnedArtifactMarker(artifactPath);
         try
@@ -881,12 +889,16 @@ internal static class WireCapture
             {
                 File.Delete(marker);
             }
+
+            return true;
         }
         catch (IOException)
         {
+            return false;
         }
         catch (UnauthorizedAccessException)
         {
+            return false;
         }
     }
 

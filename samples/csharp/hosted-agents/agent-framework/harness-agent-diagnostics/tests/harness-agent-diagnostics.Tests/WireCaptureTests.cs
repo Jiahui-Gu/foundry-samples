@@ -426,6 +426,54 @@ public sealed class WireCaptureTests
     }
 
     [Fact]
+    public async Task CaptureAsync_IgnoresUnterminatedTrailingDataForTerminalOrderingAfterDone()
+    {
+        await using LoopbackServer server = await LoopbackServer.StartAsync(async context =>
+        {
+            context.Response.ContentType = "text/event-stream";
+            await context.Response.WriteAsync(
+                "event: response.completed\n" +
+                "data: {\"type\":\"response.completed\"}\n\n" +
+                "data: [DONE]\n\n" +
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"undispatched\"}");
+        });
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            WireCaptureSummary summary = await WireCapture.CaptureAsync(
+                server.BaseUrl,
+                outputDirectory);
+
+            Assert.Equal(2, summary.EventCount);
+            Assert.Equal(["response.completed", "message"], summary.EventNames.ToArray());
+            Assert.Equal(["response.completed"], summary.DataTypes.ToArray());
+            Assert.True(summary.Completed);
+            Assert.True(summary.Done);
+            Assert.Empty(summary.FailureMarkers);
+            Assert.Empty(summary.MissingMarkers);
+
+            string sse = await File.ReadAllTextAsync(
+                Path.Combine(outputDirectory, WireCapture.SseFileName));
+            string[] jsonLines = await File.ReadAllLinesAsync(
+                Path.Combine(outputDirectory, WireCapture.EventsFileName));
+            Assert.EndsWith(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"undispatched\"}"
+                    + Environment.NewLine,
+                sse,
+                StringComparison.Ordinal);
+            Assert.False(
+                sse.EndsWith(Environment.NewLine + Environment.NewLine, StringComparison.Ordinal));
+            Assert.Equal(2, jsonLines.Length);
+            Assert.DoesNotContain("undispatched", string.Join('\n', jsonLines), StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
     public async Task CaptureAsync_FinalizesMalformedJsonOnlyAsFailedSafeMarkerEvidence()
     {
         await using LoopbackServer server = await LoopbackServer.StartAsync(async context =>
@@ -654,6 +702,11 @@ public sealed class WireCaptureTests
                     outputDirectory,
                     checkpoint =>
                     {
+                        if (checkpoint == WireCapturePublishCheckpoint.StagingDirectoryCreated)
+                        {
+                            return;
+                        }
+
                         Assert.Equal(
                             WireCapturePublishCheckpoint.PreviousBundleMovedToBackup,
                             checkpoint);
@@ -673,6 +726,118 @@ public sealed class WireCaptureTests
             Assert.Equal("Injected publish interruption.", exception.Message);
             Assert.Equal("stale-successstale-success", await ReadEvidenceAsync(outputDirectory));
             AssertNoTemporaryFiles(outputDirectory);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task CaptureAsync_KeepsCommittedBundleWhenBackupDeletionPartiallyFails()
+    {
+        await using LoopbackServer server = await LoopbackServer.StartAsync(async context =>
+        {
+            context.Response.ContentType = "text/event-stream";
+            await context.Response.WriteAsync(
+                "event: response.completed\n" +
+                "data: {\"type\":\"response.completed\"}\n\n");
+        });
+        string outputDirectory = CreateOutputDirectory();
+        await SeedStaleSuccessFilesAsync(outputDirectory);
+        FileStream? lockedBackupFile = null;
+
+        try
+        {
+            WireCaptureSummary summary = await WireCapture.CaptureAsync(
+                server.BaseUrl,
+                outputDirectory,
+                checkpoint =>
+                {
+                    if (checkpoint == WireCapturePublishCheckpoint.StagingDirectoryCreated)
+                    {
+                        return;
+                    }
+
+                    Assert.Equal(
+                        WireCapturePublishCheckpoint.PreviousBundleMovedToBackup,
+                        checkpoint);
+                    string backup = Assert.Single(
+                        EnumerateSiblingArtifacts(outputDirectory, ".backup."));
+                    File.Delete(Path.Combine(backup, WireCapture.SseFileName));
+                    lockedBackupFile = new FileStream(
+                        Path.Combine(backup, WireCapture.EventsFileName),
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.Read);
+                },
+                CancellationToken.None);
+
+            Assert.True(summary.Completed);
+            Assert.Empty(summary.FailureMarkers);
+            Assert.Empty(summary.MissingMarkers);
+            Assert.Equal(["backup-cleanup-failed"], summary.CleanupWarnings.ToArray());
+            Assert.Equal(
+                [WireCapture.EventsFileName, WireCapture.SseFileName],
+                Directory.EnumerateFiles(outputDirectory)
+                    .Select(path => Path.GetFileName(path)!)
+                    .Order(StringComparer.Ordinal)
+                    .ToArray());
+            string evidence = await ReadEvidenceAsync(outputDirectory);
+            Assert.Contains("response.completed", evidence, StringComparison.Ordinal);
+            Assert.DoesNotContain("stale-success", evidence, StringComparison.Ordinal);
+
+            string staleBackup = Assert.Single(
+                EnumerateSiblingArtifacts(outputDirectory, ".backup."));
+            Assert.False(File.Exists(Path.Combine(staleBackup, WireCapture.SseFileName)));
+            Assert.True(File.Exists(Path.Combine(staleBackup, WireCapture.EventsFileName)));
+            Assert.True(File.Exists(OwnedArtifactMarker(staleBackup)));
+        }
+        finally
+        {
+            lockedBackupFile?.Dispose();
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task CaptureAsync_CleansStagingAndMarkerWhenMarkerWriteFails()
+    {
+        await using LoopbackServer server = await LoopbackServer.StartAsync(async context =>
+        {
+            context.Response.ContentType = "text/event-stream";
+            await context.Response.WriteAsync(
+                "event: response.completed\n" +
+                "data: {\"type\":\"response.completed\"}\n\n");
+        });
+        string outputDirectory = CreateOutputDirectory();
+        await SeedStaleSuccessFilesAsync(outputDirectory);
+        bool markerFailureInjected = false;
+
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(
+                () => WireCapture.CaptureAsync(
+                    server.BaseUrl,
+                    outputDirectory,
+                    checkpoint =>
+                    {
+                        Assert.Equal(
+                            WireCapturePublishCheckpoint.StagingDirectoryCreated,
+                            checkpoint);
+                        markerFailureInjected = true;
+                        string staging = Assert.Single(
+                            EnumerateSiblingArtifacts(outputDirectory, ".staging."));
+                        File.WriteAllText(OwnedArtifactMarker(staging), "injected marker collision");
+                    },
+                    CancellationToken.None));
+
+            Assert.True(markerFailureInjected);
+            Assert.Equal("stale-successstale-success", await ReadEvidenceAsync(outputDirectory));
+            string parent = Path.GetDirectoryName(outputDirectory)!;
+            string prefix = Path.GetFileName(outputDirectory) + ".staging.";
+            Assert.Empty(Directory.EnumerateFileSystemEntries(parent, prefix + "*"));
+            Assert.Empty(EnumerateSiblingArtifacts(outputDirectory, ".backup."));
         }
         finally
         {
@@ -786,7 +951,8 @@ public sealed class WireCaptureTests
             "event: response.completed\n" +
             "data: {\"type\":\"response.completed\"}\n\n" +
             "data: [DONE]\n\n" +
-            ": forbidden after done\n\n",
+            "event: response.output_text.delta\n" +
+            "data: {\"type\":\"response.output_text.delta\"}\n\n",
             "content-after-done",
         ];
     }
