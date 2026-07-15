@@ -34,6 +34,9 @@ An `AgentSkillsProvider` is then built over `downloaded_skills/` and attached to
 1. **Advertise** — skill names and descriptions are injected into the system prompt at session start (around 100 tokens per skill).
 2. **Load** — the model calls the `load_skill` tool when it decides a skill is relevant to the user's turn, and the full `SKILL.md` body is returned.
 
+Because this sample supports instruction-only skills, it auto-approves the read-only skill tools.
+Skills that expose scripts still require explicit approval.
+
 The model only pays the token cost for a skill's full body when it actually needs it, and updating a skill in Foundry plus restarting the agent is enough to pick up the change — no code redeploy required.
 
 > **Note:** This sample supports instruction-only skills. If your downloaded skills contain resource files or scripts, configure the corresponding readers when constructing the `AgentSkillsProvider`.
@@ -124,10 +127,11 @@ Downloading skill 'escalation-policy' from Foundry...
 
 ### Invoke the local agent
 
-In a separate terminal, invoke the running agent:
+In a separate terminal, invoke the running agent. Responses v2 requires a stable local user
+identity to isolate session state; `local-user` can be replaced with any non-empty value:
 
 ```bash
-azd ai agent invoke --local "Hi, I am Alex. Can I return my tent within 30 days?"
+azd ai agent invoke --local --user-identity local-user "Hi, I am Alex. Can I return my tent within 30 days?"
 ```
 
 Or use curl directly:
@@ -135,6 +139,7 @@ Or use curl directly:
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "Hi, I am Alex. Can I return my tent within 30 days?", "stream": false}' | jq .
 ```
 

@@ -122,17 +122,24 @@ if (requestedSkills.Length > 0)
     skillsProvider = new AgentSkillsProvider(downloadedSkillsDir);
 }
 
-ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
-{
-    Name = "agent-skills",
-    Description = "Customer-support agent that loads tone and escalation policy from Foundry Skills.",
-    ChatOptions = new ChatOptions
+AIAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
     {
-        ModelId = deployment,
-        Instructions = "You are a customer-support assistant for Contoso Outdoors.",
-    },
-    AIContextProviders = skillsProvider is null ? [] : [skillsProvider],
-});
+        Name = "agent-skills",
+        Description = "Customer-support agent that loads tone and escalation policy from Foundry Skills.",
+        ChatOptions = new ChatOptions
+        {
+            ModelId = deployment,
+            Instructions = "You are a customer-support assistant for Contoso Outdoors.",
+        },
+        AIContextProviders = skillsProvider is null ? [] : [skillsProvider],
+    })
+    .AsBuilder()
+    .UseToolApproval(new ToolApprovalAgentOptions
+    {
+        // Only instruction reads are auto-approved; script execution would still require consent.
+        AutoApprovalRules = [AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule],
+    })
+    .Build();
 
 var builder = AgentHost.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
