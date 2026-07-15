@@ -87,8 +87,11 @@ azd ai agent invoke --local '{"input": "What can you help me with?"}'
 
 **PowerShell:**
 ```powershell
-azd ai agent invoke --local '{\"input\": \"What can you help me with?\"}'
+azd ai agent invoke --local --input-file request.json
 ```
+
+`request.json` contains a ready-to-send invocation that exercises the included
+pirate-joke skill without relying on shell-specific JSON escaping.
 
 Or invoke directly with curl:
 
