@@ -54,6 +54,30 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
         return WriteAsync(AgentResponseUpdatesFileName, () => ContentProjection.Project(update), cancellationToken);
     }
 
+    internal Task RecordAgentResponseUpdateAsync(
+        string phase,
+        int turn,
+        int updateIndex,
+        AgentResponseUpdate update,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(phase);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(turn);
+        ArgumentOutOfRangeException.ThrowIfNegative(updateIndex);
+        ArgumentNullException.ThrowIfNull(update);
+
+        return WriteAsync(
+            AgentResponseUpdatesFileName,
+            () => new JsonObject
+            {
+                ["phase"] = phase,
+                ["turn"] = turn,
+                ["updateIndex"] = updateIndex,
+                ["update"] = ContentProjection.Project(update),
+            },
+            cancellationToken);
+    }
+
     public Task RecordProviderStateAsync(object providerState, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(providerState);

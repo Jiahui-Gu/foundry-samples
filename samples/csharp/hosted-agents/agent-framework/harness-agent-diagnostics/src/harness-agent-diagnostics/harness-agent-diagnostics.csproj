@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <OutputType>Library</OutputType>
+    <OutputType>Exe</OutputType>
     <RootNamespace>HarnessAgentDiagnostics</RootNamespace>
     <AssemblyName>harness-agent-diagnostics</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>

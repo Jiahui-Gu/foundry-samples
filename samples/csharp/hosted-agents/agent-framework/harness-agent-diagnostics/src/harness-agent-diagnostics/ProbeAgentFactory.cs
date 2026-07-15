@@ -16,7 +16,7 @@ namespace HarnessAgentDiagnostics;
 public static class ProbeAgentFactory
 {
     private const string AgentName = "harness-agent-diagnostics";
-    private const string WorkingFolder = "probe";
+    internal const string WorkingFolder = "probe";
     private const string Description = "Diagnostic harness agent with one deterministic local compute probe and in-memory state only.";
     private const string Instructions = "Use compute_probe for deterministic numeric diagnostics, keep notes in the in-memory probe folder, and avoid any external access.";
 
@@ -102,7 +102,7 @@ public static class ProbeAgentFactory
             throw new InvalidOperationException("Harness agent did not use the expected FileMemoryProvider instance.");
         }
 
-        return new ProbeAgentContext(agent, fileStore, todoProvider, agentModeProvider);
+        return new ProbeAgentContext(agent, fileStore, todoProvider, agentModeProvider, openTelemetrySourceName);
     }
 
     internal interface IFoundryResponsesClientBuilder
@@ -157,12 +157,14 @@ public sealed class ProbeAgentContext
         HarnessAgent agent,
         InMemoryAgentFileStore fileStore,
         TodoProvider todoProvider,
-        AgentModeProvider agentModeProvider)
+        AgentModeProvider agentModeProvider,
+        string openTelemetrySourceName)
     {
         Agent = agent;
         FileStore = fileStore;
         TodoProvider = todoProvider;
         AgentModeProvider = agentModeProvider;
+        OpenTelemetrySourceName = openTelemetrySourceName;
     }
 
     public HarnessAgent Agent { get; }
@@ -172,6 +174,8 @@ public sealed class ProbeAgentContext
     public TodoProvider TodoProvider { get; }
 
     public AgentModeProvider AgentModeProvider { get; }
+
+    public string OpenTelemetrySourceName { get; }
 }
 
 #pragma warning restore MAAI001
