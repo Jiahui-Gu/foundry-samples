@@ -28,7 +28,7 @@ Each `SKILL.md` includes a unique `*-CANARY-*` token that the model is asked to 
 A [`SkillsProvider`](../../../../../packages/core/agent_framework/_skills.py) is then built over `downloaded_skills/` and attached to the `Agent` as a context provider. The provider follows the [Agent Skills](https://agentskills.io/) progressive-disclosure pattern:
 
 1. **Advertise** — skill names and descriptions are injected into the system prompt at session start (~100 tokens per skill).
-2. **Load** — the model calls the `load_skill` tool when it decides a skill is relevant to the user's turn, and the full `SKILL.md` body is returned.
+2. **Load** — the model calls the `load_skill` tool when it decides a skill is relevant to the user's turn, and the full `SKILL.md` body is returned. Because these skills contain trusted, instruction-only Markdown, the sample disables approval for this read-only operation so each documented POST completes in one request.
 
 This means the model only pays the token cost for a skill's full body when it actually needs it, and updating a skill in Foundry + restarting the agent is enough to pick up the change — no code redeploy required.
 
