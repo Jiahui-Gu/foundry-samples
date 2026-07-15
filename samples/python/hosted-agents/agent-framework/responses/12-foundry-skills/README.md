@@ -65,9 +65,9 @@ Expected output:
 
 ```text
 Provisioning skill 'escalation-policy' from skills/escalation-policy/SKILL.md...
-  Imported skill 'escalation-policy' (id=skill_..., version=v1).
+  Imported skill 'escalation-policy' (id=skill_..., version=1).
 Provisioning skill 'support-style' from skills/support-style/SKILL.md...
-  Imported skill 'support-style' (id=skill_..., version=v1).
+  Imported skill 'support-style' (id=skill_..., version=1).
 Done.
 ```
 
