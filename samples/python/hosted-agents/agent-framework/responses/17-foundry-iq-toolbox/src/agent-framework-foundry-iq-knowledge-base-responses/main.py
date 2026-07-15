@@ -14,7 +14,7 @@ load_dotenv()
 
 
 async def main():
-    credential = DefaultAzureCredential()
+    credential = DefaultAzureCredential(process_timeout=30)
 
     # FoundryToolbox resolves the toolbox endpoint from the environment
     # (TOOLBOX_ENDPOINT, or FOUNDRY_PROJECT_ENDPOINT + TOOLBOX_NAME) and authenticates
