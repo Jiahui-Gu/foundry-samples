@@ -41,6 +41,8 @@
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using Azure.AI.AgentServer.Core;
+using Azure.AI.AgentServer.Responses;
+using Azure.AI.AgentServer.Responses.Models;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
@@ -134,8 +136,34 @@ ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
     AIContextProviders = skillsProvider is null ? [] : [skillsProvider],
 });
 
+// AgentSkillsProvider's load_skill/read_skill_resource/run_skill_script tools always
+// require approval (they surface to the caller as an mcp_approval_request instead of
+// executing directly). Without an auto-approval rule, every /responses call that
+// triggers a skill load stalls on that approval gate and the Responses API caller
+// (for example `azd ai agent invoke`) has no way to resume it. Since these tools only
+// read this sample's own bundled skill content, auto-approve them server-side via
+// AgentSkillsProvider.AllToolsAutoApprovalRule.
+AIAgent hostedAgent = skillsProvider is null
+    ? agent
+    : agent.AsBuilder()
+        .UseToolApproval(new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [AgentSkillsProvider.AllToolsAutoApprovalRule],
+        })
+        .Build();
+
 var builder = AgentHost.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent);
+builder.Services.AddFoundryResponses(hostedAgent);
+
+// Hosted Foundry containers always inject the x-agent-user-id header, so
+// PlatformHostedSessionIsolationKeyProvider (the hosting layer's default) resolves a
+// session key there. Running locally via `azd ai agent run` / `dotnet run` never sends
+// that header, so without a fallback provider every /responses call fails with a 500
+// ("HostedSessionIsolationKeyProvider returned null ..."). Register a provider that
+// falls back to a fixed local-dev identity when the header is absent, leaving the
+// platform-provided value untouched when it *is* present.
+builder.Services.AddSingleton<HostedSessionIsolationKeyProvider, LocalDevSessionIsolationKeyProvider>();
+
 builder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
 
 var app = builder.Build();
@@ -221,6 +249,23 @@ static string[] ParseSkillNames(string value) =>
     value.Length == 0
         ? []
         : value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+// Falls back to a fixed local-dev identity when the platform's x-agent-user-id header is
+// absent (i.e., whenever the agent is not running inside a hosted Foundry container). When
+// the header *is* present - in production - it is used as-is, matching the hosting layer's
+// default PlatformHostedSessionIsolationKeyProvider behavior.
+internal sealed class LocalDevSessionIsolationKeyProvider : HostedSessionIsolationKeyProvider
+{
+    private const string LocalDevUserId = "local-dev-user";
+
+    public override ValueTask<HostedSessionContext?> GetKeysAsync(
+        ResponseContext context, CreateResponse request, CancellationToken cancellationToken)
+    {
+        string? userId = context?.PlatformContext?.UserIdKey;
+        return new ValueTask<HostedSessionContext?>(
+            new HostedSessionContext(string.IsNullOrWhiteSpace(userId) ? LocalDevUserId : userId));
+    }
+}
 
 // Pipeline policy that adds the Foundry-Features opt-in header on every request.
 // Required for Skills (and other preview surfaces) until the SDK injects it automatically.

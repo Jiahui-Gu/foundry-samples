@@ -62,6 +62,15 @@ See [Program.cs](src/agent-skills/Program.cs) for the full implementation.
 
 When using `azd ai agent run`, these are handled automatically. For manual runs, set them in your shell — .NET does not read `.env` files natively.
 
+### Session identity in local development
+
+Hosted Foundry containers inject an `x-agent-user-id` header on every request, which
+`AddFoundryResponses` uses (via the hosting layer's `HostedSessionIsolationKeyProvider`) to
+partition per-user session state. That header is never present when running locally, so
+[`Program.cs`](src/agent-skills/Program.cs) registers a `LocalDevSessionIsolationKeyProvider`
+that falls back to a fixed local-dev identity when the header is absent. This fallback is
+inert once deployed — the platform-provided header always takes precedence when present.
+
 ## Option 1: Azure Developer CLI (`azd`)
 
 ### Prerequisites
