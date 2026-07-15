@@ -127,7 +127,7 @@ Downloading skill 'escalation-policy' from Foundry...
 In a separate terminal, invoke the running agent:
 
 ```bash
-azd ai agent invoke --local "Hi, I am Alex. Can I return my tent within 30 days?"
+azd ai agent invoke --local --user-identity "local-user" "Hi, I am Alex. Can I return my tent within 30 days?"
 ```
 
 Or use curl directly:
@@ -135,8 +135,12 @@ Or use curl directly:
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "Hi, I am Alex. Can I return my tent within 30 days?", "stream": false}' | jq .
 ```
+
+The local user identity is required to isolate each user's agent session. Use a
+stable, non-secret identifier for local testing.
 
 | Prompt mentions | Skill that should drive the response |
 |---|---|
