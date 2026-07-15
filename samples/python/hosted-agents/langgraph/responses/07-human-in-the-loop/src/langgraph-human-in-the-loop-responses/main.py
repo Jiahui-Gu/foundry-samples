@@ -104,7 +104,7 @@ def _build_graph(model: ChatOpenAI):
             msgs.append(AIMessage(content=rev["draft"]))
             msgs.append(HumanMessage(content=f"Revision feedback: {rev['feedback']}"))
         result = await model.ainvoke(msgs)
-        return {"draft": result.content}
+        return {"draft": result.text}
 
     def await_approval(state: State) -> Command:
         # Pause until the client returns a decision. On approve=True the
