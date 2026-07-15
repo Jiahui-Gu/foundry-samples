@@ -318,6 +318,30 @@ Wait ~3 minutes for AAD propagation before invoking the agent.
 
 ## Troubleshooting
 
+### Local invocation fails with HTTP 500 "HostedSessionIsolationKeyProvider returned null"
+
+The pinned `Microsoft.Agents.AI.Foundry.Hosting` preview package requires a per-request user
+identity even for local, non-hosted runs. Locally there is no Foundry platform to supply the
+`x-agent-user-id` header, so every request to `/responses` — whether via `curl` or
+`azd ai agent invoke --local` — fails with:
+
+```json
+{"error":{"code":"server_error","message":"An internal server error occurred.", ...}}
+```
+
+and the console log shows:
+
+```
+System.InvalidOperationException: The registered HostedSessionIsolationKeyProvider returned null
+for the current request. Ensure the Foundry platform is providing the x-agent-user-id header, or
+register a custom provider that supplies fallback values for local development.
+```
+
+[Program.cs](src/azure-search-rag/Program.cs) registers a `LocalDevSessionIsolationKeyProvider` that
+supplies a fixed local user id whenever the platform header is absent (falling back to the real
+platform-supplied id when the agent is actually hosted by Foundry, so production behavior is
+unaffected). No further action is required — this is handled automatically.
+
 ### Images built on Apple Silicon or other ARM64 machines do not work on our service
 
 **Deploy with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
