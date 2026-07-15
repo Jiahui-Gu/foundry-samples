@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Text.Json;
 using HarnessAgentDiagnostics;
 using Microsoft.Agents.AI;
@@ -215,6 +216,19 @@ public sealed class ContentProjectionTests
         Assert.Equal(typeof(string).FullName, properties.GetProperty("throws").GetProperty("type").GetString());
     }
 
+    [Fact]
+    public void Project_FallbackLeavesUnknownEnumerablesOpaqueWithoutInvokingEnumerator()
+    {
+        ThrowingEnumerable values = new();
+        JsonElement properties = JsonSerializer.SerializeToElement(
+            ContentProjection.Project(new ThrowingEnumerableContent(values)))
+            .GetProperty("properties");
+
+        Assert.False(values.EnumeratorInvoked);
+        Assert.Equal(["first", "second"], properties.GetProperty("safeValues").EnumerateArray().Select(value => value.GetString()));
+        Assert.Equal(typeof(ThrowingEnumerable).FullName, properties.GetProperty("throwingValues").GetProperty("type").GetString());
+    }
+
     private sealed class UnknownContent : AIContent
     {
         public object Opaque { get; } = new { value = "raw-secret" };
@@ -227,6 +241,31 @@ public sealed class ContentProjectionTests
         public string Safe { get; } = "visible";
 
         public string Throws => throw new InvalidOperationException("must not be invoked");
+    }
+
+    private sealed class ThrowingEnumerableContent : AIContent
+    {
+        public ThrowingEnumerableContent(ThrowingEnumerable throwingValues)
+        {
+            ThrowingValues = throwingValues;
+        }
+
+        public string[] SafeValues { get; } = ["first", "second"];
+
+        public ThrowingEnumerable ThrowingValues { get; }
+    }
+
+    private sealed class ThrowingEnumerable : IEnumerable<string>
+    {
+        public bool EnumeratorInvoked { get; private set; }
+
+        public IEnumerator<string> GetEnumerator()
+        {
+            EnumeratorInvoked = true;
+            throw new InvalidOperationException("must not enumerate custom iterables");
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     private sealed class RawEnvelope;

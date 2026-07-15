@@ -84,7 +84,7 @@ public sealed record ActivitySnapshot(
     DateTime StartTimeUtc,
     TimeSpan Duration,
     IReadOnlyDictionary<string, object?> Tags,
-    IReadOnlyDictionary<string, string?> Baggage,
+    IReadOnlyList<ActivityBaggageEntrySnapshot> Baggage,
     IReadOnlyList<ActivityEventSnapshot> Events,
     IReadOnlyList<ActivityLinkSnapshot> Links)
 {
@@ -105,7 +105,7 @@ public sealed record ActivitySnapshot(
             activity.StartTimeUtc,
             activity.Duration,
             AsReadOnlyDictionary(activity.TagObjects),
-            new ReadOnlyDictionary<string, string?>(activity.Baggage.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)),
+            activity.Baggage.Select(ActivityBaggageEntrySnapshot.Create).ToArray(),
             activity.Events.Select(ActivityEventSnapshot.Create).ToArray(),
             activity.Links.Select(ActivityLinkSnapshot.Create).ToArray());
 
@@ -165,6 +165,12 @@ public sealed record ActivitySnapshot(
 }
 
 public sealed record ActivityOpaqueValue(string? Type);
+
+public sealed record ActivityBaggageEntrySnapshot(string Key, string? Value)
+{
+    internal static ActivityBaggageEntrySnapshot Create(KeyValuePair<string, string?> baggage)
+        => new(baggage.Key, baggage.Value);
+}
 
 public sealed record ActivityEventSnapshot(
     string Name,

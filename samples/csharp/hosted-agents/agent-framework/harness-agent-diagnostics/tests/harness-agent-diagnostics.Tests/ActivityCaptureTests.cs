@@ -7,7 +7,7 @@ namespace HarnessAgentDiagnostics.Tests;
 public sealed class ActivityCaptureTests
 {
     [Fact]
-    public void Drain_CapturesMatchingParentChildActivitiesInStopOrderAndIgnoresOtherSources()
+    public void Drain_CapturesMatchingParentChildActivitiesInStopOrderPreservesBaggageAndIgnoresOtherSources()
     {
         using ActivityCapture capture = new("harness-tests");
         using ActivitySource source = new("harness-tests");
@@ -19,6 +19,7 @@ public sealed class ActivityCaptureTests
             traceState: "link-vendor=value");
         List<string> mutableTag = ["captured"];
         DateTimeOffset eventTimestamp = new(2026, 7, 15, 10, 0, 0, TimeSpan.Zero);
+        KeyValuePair<string, string?>[] expectedBaggage = [];
 
         using (Activity? parent = source.StartActivity("parent", ActivityKind.Client))
         {
@@ -28,6 +29,9 @@ public sealed class ActivityCaptureTests
             parent.SetTag("gen_ai.operation.name", "chat");
             parent.SetTag("mutable", mutableTag);
             parent.AddBaggage("request", "resp_0123456789abcdefghijk");
+            parent.AddBaggage("request", "resp_1123456789abcdefghijk");
+            parent.AddBaggage("step", "ordered-value");
+            expectedBaggage = parent.Baggage.ToArray();
             parent.SetStatus(ActivityStatusCode.Error, "completed");
 
             using (Activity? child = source.StartActivity(
@@ -88,7 +92,8 @@ public sealed class ActivityCaptureTests
         Assert.Equal("linked", link.Tags["link.tag"]);
         Assert.Equal(ActivityStatusCode.Error, snapshots[1].Status);
         Assert.Equal("completed", snapshots[1].StatusDescription);
-        Assert.Equal("resp_0123456789abcdefghijk", snapshots[1].Baggage["request"]);
+        Assert.Equal(expectedBaggage.Select(pair => pair.Key), snapshots[1].Baggage.Select(entry => entry.Key));
+        Assert.Equal(expectedBaggage.Select(pair => pair.Value), snapshots[1].Baggage.Select(entry => entry.Value));
         Assert.DoesNotContain("mutated-after-stop", JsonSerializer.Serialize(snapshots[1].Tags["mutable"]), StringComparison.Ordinal);
         Assert.NotEqual(default, snapshots[0].TraceId);
         Assert.NotEqual(default, snapshots[0].SpanId);

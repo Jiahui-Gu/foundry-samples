@@ -320,7 +320,11 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
             activity.StartTimeUtc,
             activity.Duration,
             tags = activity.Tags.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
-            baggage = activity.Baggage.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+            baggage = activity.Baggage.Select(entry => new
+            {
+                entry.Key,
+                entry.Value,
+            }),
             events = activity.Events.Select(activityEvent => new
             {
                 activityEvent.Name,

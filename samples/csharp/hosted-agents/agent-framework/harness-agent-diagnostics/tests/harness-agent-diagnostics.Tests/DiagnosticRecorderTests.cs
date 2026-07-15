@@ -530,13 +530,11 @@ public sealed class DiagnosticRecorderTests
         using ManualResetEventSlim projectionStarted = new();
         using ManualResetEventSlim releaseProjection = new();
         DiagnosticRecorder recorder = new(outputDirectory);
-        AgentResponseUpdate update = new(
-            ChatRole.Assistant,
-            [new BlockingContent(projectionStarted, releaseProjection)]);
+        BlockingProviderState providerState = new(projectionStarted, releaseProjection);
 
         try
         {
-            Task acceptedRecord = Task.Run(() => recorder.RecordAgentResponseUpdateAsync(update));
+            Task acceptedRecord = Task.Run(() => recorder.RecordProviderStateAsync(providerState));
             Assert.True(
                 await Task.Run(() => projectionStarted.Wait(TimeSpan.FromSeconds(10))),
                 "The record call did not reach content projection.");
@@ -549,7 +547,7 @@ public sealed class DiagnosticRecorderTests
             await acceptedRecord;
             await disposal;
 
-            string[] lines = await File.ReadAllLinesAsync(Path.Combine(outputDirectory, "agent-response-updates.jsonl"));
+            string[] lines = await File.ReadAllLinesAsync(Path.Combine(outputDirectory, "provider-state.jsonl"));
             Assert.Single(lines);
             Assert.Contains("accepted-before-dispose", lines[0], StringComparison.Ordinal);
         }
@@ -681,9 +679,9 @@ public sealed class DiagnosticRecorderTests
 
     private sealed record ProviderStateRecord(string Kind, int Value);
 
-    private sealed class BlockingContent : AIContent
+    private sealed class BlockingProviderState
     {
-        public BlockingContent(ManualResetEventSlim projectionStarted, ManualResetEventSlim releaseProjection)
+        public BlockingProviderState(ManualResetEventSlim projectionStarted, ManualResetEventSlim releaseProjection)
         {
             Values = new BlockingValues(projectionStarted, releaseProjection);
         }
