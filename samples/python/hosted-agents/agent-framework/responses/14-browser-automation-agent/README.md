@@ -32,6 +32,10 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 
 The agent reads a single base prompt from `prompts/base.md`. That prompt contains the browser lifecycle, safety, web extraction, and form-filling guidance used at runtime.
 
+The bundled skill is repository-controlled, so its read-only `load_skill`
+operation runs without an interactive approval pause. Other skill operations
+retain the Agent Framework approval defaults.
+
 See [main.py](src/browser_automation_agent_sample_foundry/main.py) for the full implementation and [docs/sample-structure.md](docs/sample-structure.md) for the design rationale.
 
 ## Repository layout
@@ -112,6 +116,32 @@ uv pip install -r requirements.txt
 uv run main.py
 ```
 
+The host listens on port `8088` by default. Set `PORT` before running Python to
+use a different port:
+
+```bash
+PORT=9090 python main.py
+```
+
+Or in PowerShell:
+
+```powershell
+$env:PORT="9090"
+python main.py
+```
+
+To keep runtime values in a named `azd` environment instead, configure an
+environment for an existing Foundry project and start the local host explicitly
+with that environment:
+
+```bash
+azd env new browser-automation-local
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>" --environment browser-automation-local
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "gpt-4.1" --environment browser-automation-local
+azd env set TOOLBOX_NAME "browser-automation-tools" --environment browser-automation-local
+azd ai agent run --environment browser-automation-local --port 9090 --no-client
+```
+
 ## Interacting with the agent
 
 > Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](../../README.md) for more details.
@@ -137,7 +167,7 @@ Or in PowerShell:
 With `azd`:
 
 ```bash
-azd ai agent invoke --local --new-session "Open https://example.com and report the page title."
+azd ai agent invoke --local --new-session --environment browser-automation-local --port 9090 "Open https://example.com and report the page title."
 ```
 
 The server returns a response ID that you can use to continue the same conversation and reuse the browser session in later requests:
