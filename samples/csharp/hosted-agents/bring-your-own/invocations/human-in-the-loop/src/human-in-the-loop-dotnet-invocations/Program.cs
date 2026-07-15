@@ -70,7 +70,11 @@ public class HumanInTheLoopHandler : InvocationHandler
         JsonElement body;
         try
         {
-            body = await request.ReadFromJsonAsync<JsonElement>(cancellationToken);
+            // Invocations payloads are raw bytes; azd sends JSON bodies as text/plain.
+            using var document = await JsonDocument.ParseAsync(
+                request.Body,
+                cancellationToken: cancellationToken);
+            body = document.RootElement.Clone();
             if (body.ValueKind != JsonValueKind.Object)
                 throw new JsonException("body is not a JSON object");
         }

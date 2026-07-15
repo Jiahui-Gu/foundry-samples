@@ -83,6 +83,16 @@ azd ai agent run
 
 The agent host will start on `http://localhost:8088`.
 
+If port `8088` is already in use, choose another port and pass it to both
+the run and invoke commands:
+
+```bash
+azd ai agent run --port 9090
+azd ai agent invoke --local --port 9090 '{"task": "Write a product launch announcement for Azure AI Foundry"}'
+```
+
+Use the same port in the `curl` URLs below.
+
 ### Invoke the local agent
 
 In a separate terminal, submit a task:
@@ -94,7 +104,7 @@ azd ai agent invoke --local '{"task": "Write a product launch announcement for A
 In PowerShell:
 
 ```powershell
-azd ai agent invoke --local '{\"task\": \"Write a product launch announcement for Azure AI Foundry\"}'
+azd ai agent invoke --local '{"task": "Write a product launch announcement for Azure AI Foundry"}'
 ```
 
 This sample uses an approval-gate flow — submit a task, then approve, revise, or reject via curl using the same `agent_session_id`:
