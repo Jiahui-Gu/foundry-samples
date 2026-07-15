@@ -59,15 +59,11 @@ public class BrowserSession
         var processArgs = $"-s={SessionId} {command}";
         _logger?.LogInformation("[pw-cli] {Cli} -s={SessionId} {Command}", cli, SessionId, Redaction.Redact(command));
 
-        ProcessStartInfo psi = new()
-        {
-            FileName = cli,
-            Arguments = processArgs,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+        ProcessStartInfo psi = CreateProcessStartInfo(cli, processArgs);
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
 
         try
         {
@@ -105,17 +101,44 @@ public class BrowserSession
         }
     }
 
+    private static ProcessStartInfo CreateProcessStartInfo(string cli, string processArgs)
+    {
+        if (OperatingSystem.IsWindows()
+            && (cli.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
+                || cli.EndsWith(".bat", StringComparison.OrdinalIgnoreCase)))
+        {
+            var shell = Environment.GetEnvironmentVariable("COMSPEC");
+            return new ProcessStartInfo
+            {
+                FileName = string.IsNullOrWhiteSpace(shell) ? "cmd.exe" : shell,
+                Arguments = $"/d /s /c \"\"{cli}\" {processArgs}\"",
+            };
+        }
+
+        return new ProcessStartInfo
+        {
+            FileName = cli,
+            Arguments = processArgs,
+        };
+    }
+
     private static string FindCli()
     {
         var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
+        string[] fileNames = OperatingSystem.IsWindows()
+            ? ["playwright-cli.exe", "playwright-cli.cmd", "playwright-cli.bat", "playwright-cli"]
+            : ["playwright-cli", "playwright-cli.exe", "playwright-cli.cmd"];
+
         foreach (var dir in pathDirs)
         {
-            var candidate = Path.Combine(dir, "playwright-cli");
-            if (File.Exists(candidate)) return candidate;
-            if (File.Exists(candidate + ".exe")) return candidate + ".exe";
-            if (File.Exists(candidate + ".cmd")) return candidate + ".cmd";
+            foreach (var fileName in fileNames)
+            {
+                var candidate = Path.Combine(dir, fileName);
+                if (File.Exists(candidate)) return candidate;
+            }
         }
-        return "playwright-cli";
+
+        return OperatingSystem.IsWindows() ? "playwright-cli.cmd" : "playwright-cli";
     }
 
     private static string Truncate(string text, int maxLen = 12000) =>
