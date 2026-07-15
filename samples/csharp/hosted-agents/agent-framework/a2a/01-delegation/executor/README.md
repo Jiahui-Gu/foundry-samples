@@ -20,8 +20,10 @@ A2A endpoints require Microsoft Entra ID auth (Foundry User role on the project)
 
 Follow [Running the Agent Host Locally](../../../README.md#running-the-agent-host-locally) in the parent agent-framework README. A2A is a Foundry-side feature, so a local run only exercises the Responses interface.
 
+Pass a stable local user identity so the host can isolate the conversation:
+
 ```bash
-azd ai agent invoke --local "What is 15 multiplied by 23?"
+azd ai agent invoke --local --user-identity local-user "What is 15 multiplied by 23?"
 ```
 
 ## Deploying
