@@ -127,7 +127,7 @@ Downloading skill 'escalation-policy' from Foundry...
 In a separate terminal, invoke the running agent:
 
 ```bash
-azd ai agent invoke --local "Hi, I am Alex. Can I return my tent within 30 days?"
+azd ai agent invoke --local --user-identity local-user "Hi, I am Alex. Can I return my tent within 30 days?"
 ```
 
 Or use curl directly:
@@ -135,8 +135,12 @@ Or use curl directly:
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "Hi, I am Alex. Can I return my tent within 30 days?", "stream": false}' | jq .
 ```
+
+Local Responses hosting uses the user identity to isolate session state. Keep the same
+non-sensitive identity value across requests that should share a session.
 
 | Prompt mentions | Skill that should drive the response |
 |---|---|
