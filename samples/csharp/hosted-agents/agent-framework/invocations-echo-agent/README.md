@@ -4,7 +4,7 @@ A minimal echo agent hosted as a Foundry Hosted Agent using the **Invocations pr
 
 ## How It Works
 
-The agent registers a custom `EchoAIAgent` that implements the Invocations protocol. When a POST request arrives at `/invocations` with a JSON body containing a `"message"` field, the agent echoes the input back as `"Echo: <input>"`. Because no model is involved, this sample requires no Azure OpenAI deployment or Foundry project endpoint — making it ideal for testing the hosting infrastructure in isolation.
+The agent registers a custom `EchoAIAgent` that implements the Invocations protocol. When a POST request arrives at `/invocations`, the agent reads the raw request body and returns `Echo: <input>` as plain text. Because no model is involved, this sample requires no Azure OpenAI deployment or Foundry project endpoint — making it ideal for testing the hosting infrastructure in isolation.
 
 See [Program.cs](src/invocations-echo-agent/Program.cs) and [EchoAIAgent.cs](src/invocations-echo-agent/EchoAIAgent.cs) for the full implementation.
 
@@ -68,46 +68,52 @@ azd ai agent run
 
 The agent host will start on `http://localhost:8088`.
 
+For a headless terminal, or if port `8088` is already in use, skip opening the local client and choose another free port:
+
+```bash
+azd ai agent run --no-client --port 18089
+```
+
 ### Invoke the local agent
 
 In a separate terminal, invoke the running agent:
 
 ```bash
-azd ai agent invoke --local '{"message": "Hello, world!"}'
+azd ai agent invoke --local --protocol invocations "Hello, world!"
 ```
 
-In PowerShell:
+If you started the agent on the alternate port above, pass the same port when invoking it:
 
-```powershell
-azd ai agent invoke --local '{\"message\": \"Hello, world!\"}'
+```bash
+azd ai agent invoke --local --protocol invocations --port 18089 "Hello, world!"
 ```
 
-Or use curl directly:
+Or use curl directly (replace `8088` with your alternate port when needed):
 
 ```bash
 curl -X POST http://localhost:8088/invocations -i \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello, world!"}'
+  -H "Content-Type: text/plain" \
+  --data-binary 'Hello, world!'
 ```
 
-The server responds with a JSON object containing the response text. The `-i` flag includes the HTTP response headers, which include the session ID used for multi-turn conversations:
+The server responds with the echoed text. The `-i` flag includes the HTTP response headers, which include the session ID used for multi-turn conversations:
 
 ```
 HTTP/1.1 200
-content-type: application/json
+content-type: text/plain
 x-agent-invocation-id: ec04d020-a0e7-441e-ae83-db75635a9f83
 x-agent-session-id: 9370b9d4-cd13-4436-a57f-03b843ac0e17
 x-platform-server: azure-ai-agentserver-core/2.0.0 (dotnet/10.0)
 
-{"response":"Echo: Hello, world!"}
+Echo: Hello, world!
 ```
 
 For a multi-turn conversation, take the session ID from the response headers and pass it as an `agent_session_id` URL parameter:
 
 ```bash
 curl -X POST "http://localhost:8088/invocations?agent_session_id=9370b9d4-cd13-4436-a57f-03b843ac0e17" -i \
-  -H "Content-Type: application/json" \
-  -d '{"message": "How are you?"}'
+  -H "Content-Type: text/plain" \
+  --data-binary 'How are you?'
 ```
 
 ### Deploy to Foundry
@@ -123,13 +129,7 @@ For the full deployment guide, see [Deploy a hosted agent](https://learn.microso
 ### Invoke the deployed agent
 
 ```bash
-azd ai agent invoke '{"message": "Hello, world!"}'
-```
-
-In PowerShell:
-
-```powershell
-azd ai agent invoke '{\"message\": \"Hello, world!\"}'
+azd ai agent invoke --protocol invocations "Hello, world!"
 ```
 
 Stream logs from the running agent with `azd ai agent monitor`.
@@ -160,7 +160,23 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
    dotnet run
    ```
 
-3. Open the Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
+   If port `8088` is already in use, choose another free port:
+
+   ```bash
+   dotnet run --urls http://localhost:18089
+   ```
+
+3. In another terminal, send a plain-text request to the port used above:
+
+   ```bash
+   curl -X POST http://localhost:8088/invocations \
+     -H "Content-Type: text/plain" \
+     --data-binary 'Hello, world!'
+   ```
+
+   Replace `8088` with `18089` if you started the agent on the alternate port.
+
+4. Optionally, open the Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
 
 ### Deploy to Foundry
 
