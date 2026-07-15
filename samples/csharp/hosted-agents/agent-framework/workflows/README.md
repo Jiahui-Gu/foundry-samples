@@ -74,7 +74,7 @@ The agent host will start on `http://localhost:8088`.
 In a separate terminal, invoke the running agent:
 
 ```bash
-azd ai agent invoke --local "The quick brown fox jumps over the lazy dog"
+azd ai agent invoke --local --user-identity local-user "The quick brown fox jumps over the lazy dog"
 ```
 
 Or use curl directly:
@@ -82,8 +82,13 @@ Or use curl directly:
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "The quick brown fox jumps over the lazy dog", "stream": false}' | jq .
 ```
+
+Agent Framework uses the local user identity to isolate conversation state. Use
+a stable test value with `--user-identity`; direct HTTP clients must send the
+same value in the `x-agent-user-id` header.
 
 Expected output: three lines showing the text in French, Spanish, then back in English.
 

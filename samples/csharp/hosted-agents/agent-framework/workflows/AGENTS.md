@@ -12,7 +12,7 @@ The **Azure Developer CLI (`azd`)** manages the full lifecycle:
 
 ```bash
 azd ai agent run                           # Run locally on http://localhost:8088
-azd ai agent invoke --local "your message" # Test the local agent
+azd ai agent invoke --local --user-identity local-user "your message" # Test the local agent
 azd deploy                                 # Deploy to Foundry
 azd ai agent invoke "your message"         # Invoke the deployed agent
 ```
