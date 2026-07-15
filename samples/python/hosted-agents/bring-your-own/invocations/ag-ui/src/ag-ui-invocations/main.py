@@ -33,15 +33,16 @@ _endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
 if not _endpoint:
     raise EnvironmentError(
         "FOUNDRY_PROJECT_ENDPOINT environment variable is not set. "
-        "Set it to your Foundry project endpoint, or use 'azd ai agent run' "
-        "which sets it automatically."
+        "Set it directly, or add it to the active azd environment with "
+        "'azd env set FOUNDRY_PROJECT_ENDPOINT <endpoint>' before running "
+        "'azd ai agent run'."
     )
 
 _deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME")
 if not _deployment:
     raise EnvironmentError(
         "AZURE_AI_MODEL_DEPLOYMENT_NAME environment variable is not set. "
-        "Set it to your model deployment name as declared in agent.manifest.yaml."
+        "Set it to a model deployment name configured in azure.yaml."
     )
 
 # Azure OpenAI via managed identity (DefaultAzureCredential)
