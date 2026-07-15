@@ -337,6 +337,7 @@ Expected payload:
 | Summary blob is never written | Per-agent identity is missing **Storage Blob Data Contributor** on the summary container, or the container does not exist. |
 | Agent fires twice per upload | Summary is being written into the **same** container the EG subscription watches — set `AZURE_STORAGE_SUMMARY_CONTAINER_NAME` to a different container. |
 | `System topic's location must match with location of the source resource` | Create the system topic in the storage account's region (step 3 reads it via `az storage account show --query location`). |
+| (Windows) `azd ai agent run` / `python main.py` fails with `ImportError: DLL load failed while importing _cffi_backend: The filename or extension is too long` | The nested project path (`.../event-grid-trigger/src/event-grid-trigger-python-invocations/.venv/...`) plus a long checkout location exceeds Windows' path-length limit, which breaks loading the `cryptography` package's compiled extension even with `LongPathsEnabled` set. Work around it by checking out the repo closer to the drive root (e.g. `C:\src\foundry-samples`) **or** by creating the virtual environment outside the deeply nested project folder (e.g. `python -m venv C:\short\venv && C:\short\venv\Scripts\pip install -r requirements.txt`) and running `main.py` with that interpreter from the `src/event-grid-trigger-python-invocations` directory. |
 
 ## See also
 
