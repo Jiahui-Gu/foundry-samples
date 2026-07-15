@@ -3,6 +3,18 @@ azure-ai-projects
 langchain
 langchain-openai
 langchain-mcp-adapters
+# Pin mcp below 2.0.0: langchain-mcp-adapters only declares mcp>=1.9.2 (no
+# upper bound), and installing with pre-releases allowed (required for one
+# other transitive dependency) otherwise resolves the mcp 2.0.0 pre-release
+# line, which removed `RequestContext` from `mcp.shared.context` and breaks
+# langchain_mcp_adapters.callbacks at import time.
+mcp>=1.9.2,<2.0.0
+# Pin pydantic below the 2.14 pre-release line for the same reason: with
+# pre-releases allowed, the resolver otherwise picks pydantic==2.14.0a1,
+# whose `ClientRequest` model is not fully rebuilt and raises
+# `PydanticUserError: 'ClientRequest' is not fully defined` the first time
+# an MCP session initializes (mcp.client.session.ClientSession.initialize).
+pydantic>=2.11.0,<2.14
 python-dotenv
 
 # debugpy enables local debugging of this agent with the Foundry Toolkit VS Code extension.
