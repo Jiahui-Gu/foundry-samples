@@ -27,6 +27,8 @@ serves responses over the Foundry Responses Protocol.
 ## Prerequisites
 
 - Python 3.12+
+- Azure Developer CLI (`azd`) 1.25 or later with the `microsoft.foundry`
+  extension installed — see [Install the unified Foundry CLI extension bundle](#2-install-the-unified-foundry-cli-extension-bundle)
 - A Microsoft Foundry project with a toolbox created from the bundled
   [`toolbox.yaml`](src/toolbox-langgraph/toolbox.yaml) — see [Create the toolbox with `azd ai`](#4-create-the-toolbox-with-azd-ai)
 - Azure CLI installed and logged in:
@@ -37,42 +39,59 @@ serves responses over the Foundry Responses Protocol.
 
 ## Quick Start (Local)
 
+Run these commands from this sample directory (the directory containing
+`azure.yaml`). Use an isolated `azd` environment so the local process receives
+the endpoint, model, and toolbox settings explicitly. Replace the placeholder
+values with existing resources; this path does not provision or deploy anything.
+
 **Linux/macOS:**
 ```bash
-# 1. Copy and fill in the environment file
-cp .env.example .env  # skip if .env already exists
-# Edit .env — set FOUNDRY_PROJECT_ENDPOINT, AZURE_AI_MODEL_DEPLOYMENT_NAME,
-#              and TOOLBOX_ENDPOINT at minimum
+ENV_NAME="toolbox-langgraph-local"
+LOCAL_PORT=8088
 
-# 2. Install dependencies
-pip install -r requirements.txt
+# 1. Create and configure a local azd environment
+azd env new "$ENV_NAME" \
+  --subscription "<subscription-id>" \
+  --location "<azure-location>"
+azd env set FOUNDRY_PROJECT_ENDPOINT \
+  "https://<account>.services.ai.azure.com/api/projects/<project>" \
+  -e "$ENV_NAME"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<deployment-name>" -e "$ENV_NAME"
+azd env set TOOLBOX_ENDPOINT \
+  "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<toolbox>/versions/<version>/mcp?api-version=v1" \
+  -e "$ENV_NAME"
 
-# 3. Start the agent
-python main.py
+# 2. Start the agent. azd installs requirements.txt automatically.
+azd ai agent run --no-client --port "$LOCAL_PORT" -e "$ENV_NAME"
 
-# 4. Invoke
-curl -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{"input": "What tools do you have?"}'
+# 3. In another terminal, invoke a toolbox capability
+azd ai agent invoke --local --port "$LOCAL_PORT" -e "$ENV_NAME" \
+  "Use the Microsoft Learn tool to find the Foundry hosted-agent local development documentation and cite the source."
 ```
 
 **Windows (PowerShell):**
 ```powershell
-# 1. Copy and fill in the environment file
-Copy-Item .env.example .env  # skip if .env already exists
-# Edit .env — set FOUNDRY_PROJECT_ENDPOINT, AZURE_AI_MODEL_DEPLOYMENT_NAME,
-#              and TOOLBOX_ENDPOINT at minimum
+$envName = "toolbox-langgraph-local"
+$localPort = 8088
 
-# 2. Install dependencies
-pip install -r requirements.txt
+# 1. Create and configure a local azd environment
+azd env new $envName `
+  --subscription "<subscription-id>" `
+  --location "<azure-location>"
+azd env set FOUNDRY_PROJECT_ENDPOINT `
+  "https://<account>.services.ai.azure.com/api/projects/<project>" `
+  -e $envName
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<deployment-name>" -e $envName
+azd env set TOOLBOX_ENDPOINT `
+  "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<toolbox>/versions/<version>/mcp?api-version=v1" `
+  -e $envName
 
-# 3. Start the agent
-python main.py
+# 2. Start the agent. azd installs requirements.txt automatically.
+azd ai agent run --no-client --port $localPort -e $envName
 
-# 4. Invoke
-Invoke-RestMethod -Method POST http://localhost:8088/responses `
-  -ContentType "application/json" `
-  -Body '{"input": "What tools do you have?"}'
+# 3. In another terminal, invoke a toolbox capability
+azd ai agent invoke --local --port $localPort -e $envName `
+  "Use the Microsoft Learn tool to find the Foundry hosted-agent local development documentation and cite the source."
 ```
 
 <details>
@@ -405,4 +424,3 @@ This project welcomes contributions and suggestions.
 ## Trademarks
 
 This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general). Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos are subject to those third-party's policies.
-
