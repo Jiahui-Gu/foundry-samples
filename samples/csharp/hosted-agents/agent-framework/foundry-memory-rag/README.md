@@ -30,6 +30,7 @@ See [Program.cs](src/foundry-memory-rag/Program.cs) for the full implementation.
 | `AZURE_AI_EMBEDDING_DEPLOYMENT_NAME` | Yes | Embedding model deployment name (used by Foundry Memory). Declared in `azure.yaml`. |
 | `AZURE_AI_MEMORY_STORE_ID` | No | Memory store name. Defaults to `foundry-memory-rag-store`. The store is created on startup if it does not exist. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Recommended | Enables telemetry. Auto-injected in hosted containers; set manually for local dev. |
+| `PORT` | No | Local AgentServer listen port. Defaults to `8088`. Set this instead of `ASPNETCORE_URLS` when running with `dotnet run`; `azd ai agent run --port` sets it automatically. |
 
 When using `azd ai agent run`, these are handled automatically. For manual runs, set them in your shell — .NET does not read `.env` files natively.
 
@@ -79,14 +80,23 @@ azd ai agent run
 
 The agent host will start on `http://localhost:8088`.
 
-### Invoke the local agent
-
-Run a few turns to seed memory, then ask the agent to recall:
+To use another local port, pass it to both the run and invoke commands:
 
 ```bash
-azd ai agent invoke --local "Remember that I want to run my first 5k in October and I prefer morning workouts."
-azd ai agent invoke --local "I have a sensitive left knee, please avoid high-impact exercises."
-azd ai agent invoke --local "What do you already know about my training goals?"
+azd ai agent run --port 9090
+azd ai agent invoke --local --port 9090 --user-identity memory-rag-demo-user "What do you already know about my training goals?"
+```
+
+### Invoke the local agent
+
+Use the same `--user-identity` value for turns that belong to one user. Locally,
+this sends the `x-agent-user-id` header required by the hosting layer. Run a few
+turns to seed memory, then start a fresh session and ask the agent to recall:
+
+```bash
+azd ai agent invoke --local --user-identity memory-rag-demo-user "Remember that I want to run my first 5k in October and I prefer morning workouts."
+azd ai agent invoke --local --user-identity memory-rag-demo-user "I have a sensitive left knee, please avoid high-impact exercises."
+azd ai agent invoke --local --new-session --user-identity memory-rag-demo-user "What do you already know about my training goals?"
 ```
 
 Or use curl directly:
@@ -94,10 +104,12 @@ Or use curl directly:
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: memory-rag-demo-user" \
   -d '{"input": "Remember that I want to run my first 5k in October and I prefer morning workouts.", "stream": false}' | jq .
 
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: memory-rag-demo-user" \
   -d '{"input": "What do you already know about my training goals?", "stream": false}' | jq .
 ```
 
@@ -116,7 +128,7 @@ For the full deployment guide, see [Deploy a hosted agent](https://learn.microso
 ### Invoke the deployed agent
 
 ```bash
-azd ai agent invoke "What do you already know about my training goals?"
+azd ai agent invoke --user-identity memory-rag-demo-user "What do you already know about my training goals?"
 ```
 
 Stream logs from the running agent with `azd ai agent monitor`.
@@ -141,7 +153,7 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
    dotnet restore
    ```
 
-2. Configure the agent: copy `.env.example` to `.env` and fill in the [required variables](#environment-variables) (including `AZURE_AI_EMBEDDING_DEPLOYMENT_NAME`). The sample loads `.env` automatically on startup.
+2. Configure the agent: copy `.env.example` to `.env` and fill in the [required variables](#environment-variables) (including `AZURE_AI_EMBEDDING_DEPLOYMENT_NAME`). The sample loads `.env` automatically on startup. To use a port other than `8088`, also set `PORT` in `.env` and use that port when invoking the agent.
 
 3. Sign in to Azure with the Azure CLI so `DefaultAzureCredential` can authenticate the terminal process (the **F5** path reuses the Azure sign-in from the Foundry Toolkit, so it doesn't need a separate `az login`):
 
@@ -155,7 +167,7 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
    dotnet run
    ```
 
-5. Open the Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
+5. Open the Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test. When invoking from a terminal instead, include the same `x-agent-user-id` header or `--user-identity` value on every memory turn, as shown in [Invoke the local agent](#invoke-the-local-agent).
 
 ### Deploy to Foundry
 
