@@ -26,7 +26,8 @@ services:
         - Responses Protocol
         - A2A
         - Incoming A2A
-    project: src/agent-framework-a2a-executor-responses
+    # Keep this path short so local Windows virtual environments stay below MAX_PATH.
+    project: src/executor
     language: python
     codeConfiguration:
       runtime: python_3_13
