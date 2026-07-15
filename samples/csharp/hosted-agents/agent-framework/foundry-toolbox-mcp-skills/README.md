@@ -78,18 +78,32 @@ azd ai agent run
 
 The agent host will start on `http://localhost:8088`.
 
+If port 8088 is already in use, choose another port:
+
+```bash
+azd ai agent run --port 9090
+```
+
 ### Invoke the local agent
 
 In a separate terminal, invoke the running agent:
 
 ```bash
-azd ai agent invoke --local "What skills do you have available?"
+azd ai agent invoke --local --user-identity local-user "What skills do you have available?"
+```
+
+Responses protocol v2 uses the user identity as a session-isolation key. Foundry
+provides it for deployed agents; local clients must send it explicitly. When
+using an alternate port, pass the same port to the invoke command:
+
+```bash
+azd ai agent invoke --local --port 9090 --user-identity local-user "What skills do you have available?"
 ```
 
 Or use curl directly:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "What skills do you have available?", "stream": false}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -H "x-agent-user-id: local-user" -d '{"input": "What skills do you have available?", "stream": false}'
 ```
 
 ### Deploy to Foundry
