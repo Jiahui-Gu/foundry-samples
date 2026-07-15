@@ -22,6 +22,7 @@ See [Program.cs](src/azure-search-rag/Program.cs) for the full implementation.
 1. An existing Foundry project with a deployed model (or create them during setup in Option 1 — `azd provision` can create them for you).
 2. **[.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)** or later.
 3. **Additional Azure resources:** an Azure AI Search service with a populated index. `azd provision` (Option 1) can create the search service; the index must exist before the first run — see [Provisioning the search index](#provisioning-the-search-index).
+4. **Search access:** grant the local identity `Search Index Data Reader`, or use a read-only query key for local development.
 
 ### Environment variables
 
@@ -30,10 +31,11 @@ See [Program.cs](src/azure-search-rag/Program.cs) for the full implementation.
 | `FOUNDRY_PROJECT_ENDPOINT` | Yes | Foundry project endpoint. Auto-injected in hosted containers; set automatically by `azd ai agent run` locally. |
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Chat model deployment name. Declared in `azure.yaml`. |
 | `AZURE_SEARCH_ENDPOINT` | Yes | Azure AI Search service endpoint. Derived from `AZURE_AI_SEARCH_SERVICE_NAME` (auto-injected by the starter) via the binding in `azure.yaml`. Set manually only when running without `azd`. |
+| `AZURE_SEARCH_API_KEY` | No | Read-only Azure AI Search query key for local development when the signed-in identity does not have `Search Index Data Reader`. Omit to use Entra ID. |
 | `AZURE_SEARCH_INDEX_NAME` | Yes | Search index name. Defaults to `contoso-outdoors`. **Must exist before the agent starts** (see [Provisioning the search index](#provisioning-the-search-index)). |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Recommended | Enables telemetry. Auto-injected in hosted containers; set manually for local dev. |
 
-When using `azd ai agent run`, these are handled automatically. For manual runs, set them in your shell — .NET does not read `.env` files natively.
+When using `azd ai agent run`, the required endpoint and deployment variables are handled automatically. Set `AZURE_SEARCH_API_KEY` only when using the optional local query-key path. For manual runs, set the variables in your shell or `.env` file.
 
 ## Option 1: Azure Developer CLI (`azd`)
 
@@ -92,6 +94,14 @@ azd provision
 
 ### Run the agent locally
 
+If your local identity cannot be granted `Search Index Data Reader`, obtain a **query key** (not an admin key) from the Search service and store it only in the active local azd environment:
+
+```bash
+azd env set AZURE_SEARCH_API_KEY "<query-key>"
+```
+
+Do not commit the key. Query keys can read an existing index but cannot create or seed one.
+
 ```bash
 azd ai agent run
 ```
@@ -105,7 +115,7 @@ The agent host will start on `http://localhost:8088`.
 In a separate terminal, invoke the running agent:
 
 ```bash
-azd ai agent invoke --local "What is your return policy?"
+azd ai agent invoke --local --user-identity local-user "What is your return policy?"
 ```
 
 Or use curl directly:
@@ -113,14 +123,17 @@ Or use curl directly:
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "What is your return policy?", "stream": false}' | jq .
 
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "How long does shipping take?", "stream": false}' | jq .
 
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "How do I clean my tent?", "stream": false}' | jq .
 ```
 
@@ -162,7 +175,7 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
    dotnet restore
    ```
 
-2. Configure the agent: copy `.env.example` to `.env` and fill in the [required variables](#environment-variables) (including `AZURE_SEARCH_ENDPOINT` and `AZURE_SEARCH_INDEX_NAME`). The sample loads `.env` automatically on startup.
+2. Configure the agent: copy `.env.example` to `.env` and fill in the [required variables](#environment-variables) (including `AZURE_SEARCH_ENDPOINT` and `AZURE_SEARCH_INDEX_NAME`). If your identity does not have `Search Index Data Reader`, also set a read-only `AZURE_SEARCH_API_KEY`. The sample loads `.env` automatically on startup.
 
 3. Sign in to Azure with the Azure CLI so `DefaultAzureCredential` can authenticate the terminal process (the **F5** path reuses the Azure sign-in from the Foundry Toolkit, so it doesn't need a separate `az login`):
 
@@ -201,7 +214,9 @@ The agent reads from a pre-existing index. Provision it once, before the first r
 
 ### Required search service authentication mode
 
-The script and the agent runtime both authenticate to Azure AI Search via Entra ID (AAD) bearer tokens, **not** API keys. The search service must therefore have RBAC enabled. Services created before May 2024, or services explicitly provisioned with `disableLocalAuth=false` and `authOptions=null`, default to **API-key-only** auth and will return `403 Forbidden` to every AAD token regardless of RBAC role assignments.
+The bootstrap script authenticates to Azure AI Search via an Entra ID (AAD) bearer token. The agent runtime also uses Entra ID by default, so the search service must have RBAC enabled for that path. Services created before May 2024, or services explicitly provisioned with `disableLocalAuth=false` and `authOptions=null`, default to **API-key-only** auth and will return `403 Forbidden` to every AAD token regardless of RBAC role assignments.
+
+For local development only, the runtime can instead use `AZURE_SEARCH_API_KEY` with a read-only query key. This is useful when you can read the Search service configuration but cannot grant yourself a data-plane role. The index must already be created and populated because a query key cannot perform the bootstrap operations.
 
 Verify the current auth mode:
 
@@ -301,7 +316,7 @@ curl -sS -X POST "${SEARCH_ENDPOINT}/indexes/${INDEX_NAME}/docs/index?api-versio
 
 ### Required RBAC for the agent runtime
 
-The hosted agent runs under its own managed identity. Grant that identity `Search Index Data Reader` on the search service scope so it can query the index at runtime:
+The hosted agent runs under its own managed identity. When using the default Entra ID path, grant that identity `Search Index Data Reader` on the search service scope so it can query the index at runtime:
 
 ```bash
 # Look up the agent MI principal id from the deployed agent version.

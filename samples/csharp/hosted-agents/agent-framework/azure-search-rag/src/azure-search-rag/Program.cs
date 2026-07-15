@@ -19,13 +19,16 @@ var deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_N
 var searchEndpoint = new Uri(Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_SEARCH_ENDPOINT environment variable is not set."));
 var indexName = Environment.GetEnvironmentVariable("AZURE_SEARCH_INDEX_NAME") ?? "contoso-outdoors";
+var searchApiKey = Environment.GetEnvironmentVariable("AZURE_SEARCH_API_KEY");
 
 var credential = new DefaultAzureCredential();
 
 // The index is expected to exist and be populated before the agent runs. See README.md for the
 // schema and seed content. Provisioning the index is a one-time setup step, not part of the
 // agent runtime.
-var searchClient = new SearchClient(searchEndpoint, indexName, credential);
+var searchClient = string.IsNullOrWhiteSpace(searchApiKey)
+    ? new SearchClient(searchEndpoint, indexName, credential)
+    : new SearchClient(searchEndpoint, indexName, new AzureKeyCredential(searchApiKey));
 
 var textSearchOptions = new TextSearchProviderOptions
 {
