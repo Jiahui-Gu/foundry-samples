@@ -14,7 +14,7 @@ flowchart LR
 ```
 
 1. **Knowledge base (data plane).** [`provision_kb.py`](src/agent-framework-foundry-iq-knowledge-base-responses/provision_kb.py) creates an Azure AI Search index, seeds it with the "Earth at night" documents, and builds a **knowledge source** and a **knowledge base**. The knowledge base synthesizes answers with an Azure OpenAI model and exposes an MCP endpoint (`{search}/knowledgebases/{kb}/mcp`) whose only tool is `knowledge_base_retrieve`.
-2. **Toolbox connection.** A `RemoteTool` **connection** (`knowledge-base-mcp`) authenticates to the knowledge base's MCP endpoint with **Agentic Identity** — the agent's managed identity, keyless. A **toolbox** (defined in [`toolbox.yaml`](src/agent-framework-foundry-iq-knowledge-base-responses/toolbox.yaml)) exposes that endpoint as an MCP tool: its `server_url` points at the knowledge base's MCP endpoint and `project_connection_id` supplies the connection's auth. Both are created for you by the `azd provision` `postprovision` hook (see [Provision and run the agent](#provision-and-run-the-agent)).
+2. **Toolbox connections.** The hook creates two keyless `RemoteTool` connections to the knowledge base MCP endpoint. `knowledge-base-mcp-local` uses your Entra identity for local development, while `knowledge-base-mcp` uses the deployed agent's Agentic Identity. Their matching toolboxes are defined in [`toolbox-local.yaml`](src/agent-framework-foundry-iq-knowledge-base-responses/toolbox-local.yaml) and [`toolbox.yaml`](src/agent-framework-foundry-iq-knowledge-base-responses/toolbox.yaml).
 3. **Agent.** [`main.py`](src/agent-framework-foundry-iq-knowledge-base-responses/main.py) uses `FoundryChatClient` and connects to the toolbox's MCP endpoint with `FoundryToolbox`. The agent discovers `knowledge_base_retrieve` at runtime and grounds its answers in the retrieved sources.
 
 ### Model Integration
@@ -33,7 +33,7 @@ The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-
 | --- | --- | --- | --- |
 | Search service managed identity | **Cognitive Services User** | Foundry account | Knowledge base calls the Azure OpenAI model for answer synthesis (keyless) |
 | You (provisioning) | **Search Service Contributor** | Search service | Create the index, knowledge source, and knowledge base |
-| You (provisioning) | **Search Index Data Contributor** | Search service | Upload the seed documents |
+| You (provisioning and local use) | **Search Index Data Contributor** and **Search Index Data Reader** | Search service | Upload the seed documents and query the knowledge base locally |
 | The agent's managed identity | **Search Index Data Reader** | Search service | The deployed agent retrieves from the knowledge base at query time |
 
 > The agent's managed identity is created when you deploy the agent. Grant it **Search Index Data Reader** on the search service after the first `azd deploy` (see [Grant the agent access](#grant-the-agent-access-to-the-knowledge-base)).
@@ -42,7 +42,7 @@ The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-
 
 ### Option 1: Azure Developer CLI (`azd`)
 
-With the bundled `postprovision` hook, a single `azd provision` builds the knowledge base, creates the toolbox connection and toolbox, and sets `TOOLBOX_ENDPOINT` for you.
+With the bundled `postprovision` hook, a single `azd provision` builds the knowledge base, creates the local and deployed-agent toolbox connections, and sets both toolbox endpoints for you.
 
 #### 1. Install prerequisites
 
@@ -98,8 +98,8 @@ azd provision
 
 1. Runs [`provision_kb.py`](src/agent-framework-foundry-iq-knowledge-base-responses/provision_kb.py) to build the search index, knowledge source, and knowledge base, and stores the KB's MCP endpoint as `KB_MCP_ENDPOINT`.
 2. Creates the `knowledge-base-mcp` `RemoteTool` connection (Agentic Identity, keyless) targeting that endpoint.
-3. Creates the `knowledge-base` toolbox from [`toolbox.yaml`](src/agent-framework-foundry-iq-knowledge-base-responses/toolbox.yaml).
-4. Sets `TOOLBOX_ENDPOINT` so the agent connects to the toolbox.
+3. Creates the `knowledge-base-local` user-authenticated toolbox and the `knowledge-base` agent-authenticated toolbox.
+4. Sets `TOOLBOX_ENDPOINT` for local runs and `TOOLBOX_AGENT_ENDPOINT` for deployment.
 
 > The hook derives `AZURE_OPENAI_ENDPOINT` from your Foundry project endpoint for answer synthesis. To use a different Azure OpenAI resource, set it explicitly first: `azd env set AZURE_OPENAI_ENDPOINT "https://<account>.openai.azure.com"`.
 
@@ -164,12 +164,17 @@ In PowerShell, use `$env:NAME="value"` instead of `export`. The script prints th
 azd ai connection create knowledge-base-mcp --kind remote-tool \
   --target "<kb-mcp-endpoint>" \
   --auth-type agentic-identity --audience https://search.azure.com --metadata "ApiType=Azure"
+azd ai connection create knowledge-base-mcp-local --kind remote-tool \
+  --target "<kb-mcp-endpoint>" \
+  --auth-type user-entra-token --audience https://search.azure.com --metadata "ApiType=Azure"
 
 # toolbox.yaml uses ${KB_MCP_ENDPOINT} for the tool's server_url — replace it with
 # the endpoint provision_kb.py printed (or export KB_MCP_ENDPOINT and envsubst it).
 azd ai toolbox create knowledge-base --from-file ./toolbox.yaml
+azd ai toolbox create knowledge-base-local --from-file ./toolbox-local.yaml
 
-azd env set TOOLBOX_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/knowledge-base/mcp?api-version=v1"
+azd env set TOOLBOX_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/knowledge-base-local/mcp?api-version=v1"
+azd env set TOOLBOX_AGENT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/knowledge-base/mcp?api-version=v1"
 ```
 
 ## Option 2: VS Code (Foundry Toolkit)
