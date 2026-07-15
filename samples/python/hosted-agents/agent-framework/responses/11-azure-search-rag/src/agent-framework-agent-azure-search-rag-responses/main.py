@@ -36,7 +36,9 @@ def _resolved_env(name: str) -> str:
 
 
 async def main():
-    credential = DefaultAzureCredential()
+    # Developer credentials can take longer than the default subprocess timeout
+    # when Azure CLI or azd starts cold on a local machine.
+    credential = DefaultAzureCredential(process_timeout=30)
 
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
