@@ -74,6 +74,7 @@ async def main():
         url=resolve_toolbox_endpoint(),
         http_client=http_client,
         load_prompts=False,
+        allowed_tools=["code_interpreter"],
     )
 
     # Create the chat client
