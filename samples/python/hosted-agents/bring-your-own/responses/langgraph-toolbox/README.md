@@ -39,18 +39,21 @@ serves responses over the Foundry Responses Protocol.
 
 **Linux/macOS:**
 ```bash
-# 1. Copy and fill in the environment file
+# 1. Enter the agent source directory
+cd src/toolbox-langgraph
+
+# 2. Copy and fill in the environment file
 cp .env.example .env  # skip if .env already exists
 # Edit .env — set FOUNDRY_PROJECT_ENDPOINT, AZURE_AI_MODEL_DEPLOYMENT_NAME,
 #              and TOOLBOX_ENDPOINT at minimum
 
-# 2. Install dependencies
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# 3. Start the agent
+# 4. Start the agent
 python main.py
 
-# 4. Invoke
+# 5. Invoke
 curl -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
   -d '{"input": "What tools do you have?"}'
@@ -58,18 +61,21 @@ curl -X POST http://localhost:8088/responses \
 
 **Windows (PowerShell):**
 ```powershell
-# 1. Copy and fill in the environment file
+# 1. Enter the agent source directory
+Set-Location src/toolbox-langgraph
+
+# 2. Copy and fill in the environment file
 Copy-Item .env.example .env  # skip if .env already exists
 # Edit .env — set FOUNDRY_PROJECT_ENDPOINT, AZURE_AI_MODEL_DEPLOYMENT_NAME,
 #              and TOOLBOX_ENDPOINT at minimum
 
-# 2. Install dependencies
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# 3. Start the agent
+# 4. Start the agent
 python main.py
 
-# 4. Invoke
+# 5. Invoke
 Invoke-RestMethod -Method POST http://localhost:8088/responses `
   -ContentType "application/json" `
   -Body '{"input": "What tools do you have?"}'
@@ -162,7 +168,7 @@ azd auth login
 This sample exposes the toolbox tools to a LangGraph ReAct loop. The agent reads the toolbox's MCP endpoint from the `TOOLBOX_ENDPOINT` environment variable. The sample bundles a [`toolbox.yaml`](src/toolbox-langgraph/toolbox.yaml) that defines `web_search` plus the public Microsoft Learn MCP server (no authentication). Create the toolbox once from that file:
 
 ```bash
-azd ai toolbox create my-toolbox --from-file ./toolbox.yaml
+azd ai toolbox create my-toolbox --from-file ./src/toolbox-langgraph/toolbox.yaml
 ```
 
 The first version becomes the default automatically. Manage with `azd ai toolbox list`, `azd ai toolbox show my-toolbox`, `azd ai toolbox version list my-toolbox`, and `azd ai toolbox delete my-toolbox --force`.
@@ -405,4 +411,3 @@ This project welcomes contributions and suggestions.
 ## Trademarks
 
 This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general). Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos are subject to those third-party's policies.
-
