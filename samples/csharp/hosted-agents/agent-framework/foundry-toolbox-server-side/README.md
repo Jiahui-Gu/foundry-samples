@@ -54,6 +54,15 @@ If you don't already have a Foundry project, model deployment, and toolbox, prov
 azd provision
 ```
 
+### Configure an existing toolbox
+
+If you selected an existing Foundry project and skipped provisioning, set the name of
+the existing toolbox in the azd environment:
+
+```bash
+azd env set TOOLBOX_NAME "<your-toolbox-name>"
+```
+
 ### Run the agent locally
 
 ```bash
@@ -67,15 +76,17 @@ The agent host will start on `http://localhost:8088`.
 In a separate terminal, ask the agent about its toolbox tools:
 
 ```bash
-azd ai agent invoke --local "What tools do you have?"
+azd ai agent invoke --local --user-identity local-user "What tools do you have?"
 ```
+
+The local user identity is required by Agent Framework to isolate conversation state.
 
 Or use curl directly:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "What tools do you have?", "stream": false}'
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Find the latest API version for Microsoft.CognitiveServices accounts in the azure-rest-api-specs repo.", "stream": false}'
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Use the code interpreter to compute the 30th Fibonacci number.", "stream": false}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -H "x-agent-user-id: local-user" -d '{"input": "What tools do you have?", "stream": false}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -H "x-agent-user-id: local-user" -d '{"input": "Find the latest API version for Microsoft.CognitiveServices accounts in the azure-rest-api-specs repo.", "stream": false}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -H "x-agent-user-id: local-user" -d '{"input": "Use the code interpreter to compute the 30th Fibonacci number.", "stream": false}'
 ```
 
 ### Deploy to Foundry
