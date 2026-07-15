@@ -25,7 +25,7 @@ public class BrowserSession
     /// <summary>Attach to a remote browser via CDP URL.</summary>
     public async Task<(bool Success, string Output)> ConnectAsync(string cdpUrl)
     {
-        var result = await RunCommandAsync($"attach --cdp={cdpUrl}");
+        var result = await RunCommandAsync("attach", $"--cdp={cdpUrl}");
         Connected = result.Success;
         return result;
     }
@@ -36,13 +36,7 @@ public class BrowserSession
         if (!Connected)
             return (false, "Browser not connected. Session may need to be recreated.");
 
-        var fullCmd = command;
-        if (args.Length > 0)
-        {
-            var quoted = args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a);
-            fullCmd += " " + string.Join(" ", quoted);
-        }
-        return await RunCommandAsync(fullCmd);
+        return await RunCommandAsync([command, .. args]);
     }
 
     /// <summary>Detach from the browser session.</summary>
@@ -53,21 +47,25 @@ public class BrowserSession
         Connected = false;
     }
 
-    private async Task<(bool Success, string Output)> RunCommandAsync(string command)
+    private async Task<(bool Success, string Output)> RunCommandAsync(params string[] arguments)
     {
         var cli = FindCli();
-        var processArgs = $"-s={SessionId} {command}";
-        _logger?.LogInformation("[pw-cli] {Cli} -s={SessionId} {Command}", cli, SessionId, Redaction.Redact(command));
+        var command = string.Join(" ", arguments.Select(FormatArgument));
+        _logger?.LogInformation("[pw-cli] {Cli} -s={SessionId} {Command}", cli.DisplayName, SessionId, Redaction.Redact(command));
 
         ProcessStartInfo psi = new()
         {
-            FileName = cli,
-            Arguments = processArgs,
+            FileName = cli.FileName,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        foreach (var prefixArgument in cli.PrefixArguments)
+            psi.ArgumentList.Add(prefixArgument);
+        psi.ArgumentList.Add($"-s={SessionId}");
+        foreach (var argument in arguments)
+            psi.ArgumentList.Add(argument);
 
         try
         {
@@ -105,18 +103,64 @@ public class BrowserSession
         }
     }
 
-    private static string FindCli()
+    private static CliLaunch FindCli()
     {
         var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
         foreach (var dir in pathDirs)
         {
+            if (string.IsNullOrWhiteSpace(dir))
+                continue;
+
             var candidate = Path.Combine(dir, "playwright-cli");
-            if (File.Exists(candidate)) return candidate;
-            if (File.Exists(candidate + ".exe")) return candidate + ".exe";
-            if (File.Exists(candidate + ".cmd")) return candidate + ".cmd";
+            if (OperatingSystem.IsWindows())
+            {
+                if (File.Exists(candidate + ".exe"))
+                    return new(candidate + ".exe", candidate + ".exe", []);
+
+                // npm's extensionless and .cmd launchers cannot be executed safely
+                // with redirected streams. Invoke the installed JavaScript entry
+                // point directly so signed CDP URLs remain one argument.
+                var script = Path.Combine(dir, "node_modules", "@playwright", "cli", "playwright-cli.js");
+                if (File.Exists(script))
+                {
+                    var node = FindOnPath("node.exe")
+                        ?? throw new FileNotFoundException(
+                            "node.exe was not found on PATH. Install Node.js before using playwright-cli.");
+                    return new(node, candidate, [script]);
+                }
+            }
+            else if (File.Exists(candidate))
+            {
+                return new(candidate, candidate, []);
+            }
         }
-        return "playwright-cli";
+
+        throw new FileNotFoundException(
+            "playwright-cli was not found on PATH. Install it with 'npm install -g @playwright/cli@latest'.");
     }
+
+    private static string? FindOnPath(string fileName)
+    {
+        var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
+        foreach (var dir in pathDirs)
+        {
+            if (string.IsNullOrWhiteSpace(dir))
+                continue;
+
+            var candidate = Path.Combine(dir, fileName);
+            if (File.Exists(candidate))
+                return candidate;
+        }
+        return null;
+    }
+
+    private static string FormatArgument(string argument) =>
+        argument.Any(char.IsWhiteSpace) ? $"\"{argument}\"" : argument;
+
+    private sealed record CliLaunch(
+        string FileName,
+        string DisplayName,
+        IReadOnlyList<string> PrefixArguments);
 
     private static string Truncate(string text, int maxLen = 12000) =>
         text.Length <= maxLen ? text : text[..maxLen] + "\n...[truncated]";
