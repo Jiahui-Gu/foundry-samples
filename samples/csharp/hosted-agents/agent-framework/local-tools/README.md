@@ -71,10 +71,12 @@ The agent host will start on `http://localhost:8088`.
 
 ### Invoke the local agent
 
-In a separate terminal, invoke the running agent:
+In a separate terminal, invoke the running agent. Agent Framework uses the user
+identity as a session-isolation key, so local requests must provide a stable
+identity:
 
 ```bash
-azd ai agent invoke --local "Find hotels in Seattle for Dec 20-25 under $200/night"
+azd ai agent invoke --local --user-identity local-user "Find hotels in Seattle for Dec 20-25 under $200/night"
 ```
 
 Or use curl directly:
@@ -82,6 +84,7 @@ Or use curl directly:
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "Find hotels in Seattle for Dec 20-25 under $200/night", "stream": false}' | jq .
 ```
 

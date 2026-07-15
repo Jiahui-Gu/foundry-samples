@@ -120,22 +120,24 @@ Right now, the agent host should be running on `http://localhost:8088`
 
 #### Invoking the Agent
 
-Open another terminal, **navigate to the project directory**, and run the following command to invoke the agent:
+Open another terminal, **navigate to the project directory**, and run the
+following command to invoke the agent. Agent Framework uses the user identity as
+a session-isolation key, so local requests must provide a stable identity:
 
 ```bash
-azd ai agent invoke --local "Hello!"
+azd ai agent invoke --local --user-identity local-user "Hello!"
 ```
 
 Or you can in another terminal, without navigating to the project directory, run the following command to invoke the agent:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Hello!"}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -H "x-agent-user-id: local-user" -d '{"input": "Hello!"}'
 ```
 
 Or in PowerShell:
 
 ```powershell
-(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Body '{"input": "Hello!"}').Content
+(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Headers @{ "x-agent-user-id" = "local-user" } -Body '{"input": "Hello!"}').Content
 ```
 
 <details>
@@ -222,16 +224,17 @@ Right now, the agent host should be running on `http://localhost:8088`
 
 #### Invoking the Agent
 
-On another terminal, run the following command to invoke the agent:
+On another terminal, send a request with a stable user identity for session
+isolation:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Hello!"}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -H "x-agent-user-id: local-user" -d '{"input": "Hello!"}'
 ```
 
 Or in PowerShell:
 
 ```powershell
-(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Body '{"input": "Hello!"}').Content
+(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Headers @{ "x-agent-user-id" = "local-user" } -Body '{"input": "Hello!"}').Content
 ```
 
 ## Deploying the Agent to Foundry
