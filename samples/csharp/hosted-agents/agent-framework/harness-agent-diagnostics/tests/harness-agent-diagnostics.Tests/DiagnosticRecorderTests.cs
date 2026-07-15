@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using HarnessAgentDiagnostics;
@@ -101,6 +102,56 @@ public sealed class DiagnosticRecorderTests
     }
 
     [Fact]
+    public async Task RecordProviderStateAsync_RemovesUnsafeJsonNodeSubtreesByKey()
+    {
+        string outputDirectory = CreateOutputDirectory();
+        JsonObject providerState = new()
+        {
+            ["rawRepresentationType"] = "Provider.SafeEnvelope",
+            ["visible"] = "safe-value",
+            ["nested"] = new JsonObject
+            {
+                ["rawRepresentationType"] = new JsonObject { ["payload"] = "disguised-raw-payload-secret" },
+                ["rawRepresentation"] = new JsonObject { ["payload"] = "raw-payload-secret" },
+                ["credentialState"] = new JsonObject { ["value"] = "credential-payload-secret" },
+                ["accessToken"] = new JsonObject { ["value"] = "token-payload-secret" },
+                ["requestHeaders"] = new JsonObject { ["value"] = "header-payload-secret" },
+                ["exceptionDetails"] = new JsonObject { ["message"] = "exception-payload-secret" },
+                ["stackFrames"] = new JsonArray("stack-payload-secret"),
+                ["transport"] = new JsonObject { ["body"] = "transport-payload-secret" },
+            },
+        };
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordProviderStateAsync(providerState);
+            }
+
+            using JsonDocument document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(outputDirectory, "provider-state.jsonl")));
+            JsonElement root = document.RootElement;
+            JsonElement nested = root.GetProperty("nested");
+
+            Assert.Equal("Provider.SafeEnvelope", root.GetProperty("rawRepresentationType").GetString());
+            Assert.Equal("safe-value", root.GetProperty("visible").GetString());
+            Assert.False(nested.TryGetProperty("rawRepresentationType", out _));
+            Assert.False(nested.TryGetProperty("rawRepresentation", out _));
+            Assert.False(nested.TryGetProperty("credentialState", out _));
+            Assert.False(nested.TryGetProperty("accessToken", out _));
+            Assert.False(nested.TryGetProperty("requestHeaders", out _));
+            Assert.False(nested.TryGetProperty("exceptionDetails", out _));
+            Assert.False(nested.TryGetProperty("stackFrames", out _));
+            Assert.False(nested.TryGetProperty("transport", out _));
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
     public async Task RecordProviderStateAsync_AliasesToolIdentifiersWithoutChangingOrdinaryProse()
     {
         const string toolId = "tool_0123456789abcdefghijk";
@@ -130,6 +181,45 @@ public sealed class DiagnosticRecorderTests
             Assert.DoesNotContain(alphabeticToolId, root.GetRawText(), StringComparison.Ordinal);
             Assert.StartsWith("tool-", root.GetProperty("alphabeticToolId").GetString(), StringComparison.Ordinal);
             Assert.Equal(prose, root.GetProperty("text").GetString());
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordProviderStateAsync_AliasesAlphabeticToolIdentifiersInCollectionsAndText()
+    {
+        const string toolId = "tool_abcdefghijklmnop";
+        const string ordinaryWord = "tool_assistance";
+        const string eventName = "response.tool.completed";
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordProviderStateAsync(new JsonObject
+                {
+                    ["values"] = new JsonArray(toolId, ordinaryWord, eventName),
+                    ["baggage"] = $"selected={toolId}; helper={ordinaryWord}; event={eventName}",
+                });
+            }
+
+            using JsonDocument document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(outputDirectory, "provider-state.jsonl")));
+            JsonElement root = document.RootElement;
+            JsonElement values = root.GetProperty("values");
+            string alias = values[0].GetString()!;
+
+            Assert.StartsWith("tool-", alias, StringComparison.Ordinal);
+            Assert.Equal(ordinaryWord, values[1].GetString());
+            Assert.Equal(eventName, values[2].GetString());
+            Assert.DoesNotContain(toolId, root.GetRawText(), StringComparison.Ordinal);
+            Assert.Contains($"selected={alias}", root.GetProperty("baggage").GetString(), StringComparison.Ordinal);
+            Assert.Contains($"helper={ordinaryWord}", root.GetProperty("baggage").GetString(), StringComparison.Ordinal);
+            Assert.Contains($"event={eventName}", root.GetProperty("baggage").GetString(), StringComparison.Ordinal);
         }
         finally
         {
@@ -312,6 +402,44 @@ public sealed class DiagnosticRecorderTests
         }
     }
 
+    [Fact]
+    public async Task DisposeAsync_FlushesCallsStartedBeforeDisposalAndRejectsLaterCalls()
+    {
+        string outputDirectory = CreateOutputDirectory();
+        using ManualResetEventSlim projectionStarted = new();
+        using ManualResetEventSlim releaseProjection = new();
+        DiagnosticRecorder recorder = new(outputDirectory);
+        AgentResponseUpdate update = new(
+            ChatRole.Assistant,
+            [new BlockingContent(projectionStarted, releaseProjection)]);
+
+        try
+        {
+            Task acceptedRecord = Task.Run(() => recorder.RecordAgentResponseUpdateAsync(update));
+            Assert.True(
+                await Task.Run(() => projectionStarted.Wait(TimeSpan.FromSeconds(10))),
+                "The record call did not reach content projection.");
+
+            ValueTask disposal = recorder.DisposeAsync();
+            await Assert.ThrowsAsync<ObjectDisposedException>(
+                () => recorder.RecordProviderStateAsync(new { value = "started-after-dispose" }));
+
+            releaseProjection.Set();
+            await acceptedRecord;
+            await disposal;
+
+            string[] lines = await File.ReadAllLinesAsync(Path.Combine(outputDirectory, "agent-response-updates.jsonl"));
+            Assert.Single(lines);
+            Assert.Contains("accepted-before-dispose", lines[0], StringComparison.Ordinal);
+        }
+        finally
+        {
+            releaseProjection.Set();
+            await recorder.DisposeAsync();
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
     private static string CreateOutputDirectory()
     {
         string path = Path.Combine(AppContext.BaseDirectory, "diagnostic-test-output", Guid.NewGuid().ToString("N"));
@@ -356,4 +484,32 @@ public sealed class DiagnosticRecorderTests
     }
 
     private sealed record ProviderStateRecord(string Kind, int Value);
+
+    private sealed class BlockingContent : AIContent
+    {
+        public BlockingContent(ManualResetEventSlim projectionStarted, ManualResetEventSlim releaseProjection)
+        {
+            Values = new BlockingValues(projectionStarted, releaseProjection);
+        }
+
+        public IEnumerable<string> Values { get; }
+    }
+
+    private sealed class BlockingValues(
+        ManualResetEventSlim projectionStarted,
+        ManualResetEventSlim releaseProjection) : IEnumerable<string>
+    {
+        public IEnumerator<string> GetEnumerator()
+        {
+            projectionStarted.Set();
+            if (!releaseProjection.Wait(TimeSpan.FromSeconds(10)))
+            {
+                throw new TimeoutException("Timed out waiting to release content projection.");
+            }
+
+            yield return "accepted-before-dispose";
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
 }
