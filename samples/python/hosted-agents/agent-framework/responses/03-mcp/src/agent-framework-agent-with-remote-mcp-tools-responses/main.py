@@ -33,6 +33,7 @@ def main():
             url="https://api.githubcopilot.com/mcp/",
             headers={
                 "Authorization": f"Bearer {github_pat}",
+                "Accept": "application/json, text/event-stream",
             },
             approval_mode="never_require",
         ))
