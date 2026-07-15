@@ -6,15 +6,19 @@ An [Agent Framework](https://github.com/microsoft/agent-framework) agent that an
 
 ```mermaid
 flowchart LR
-    U[User] --> A["Hosted agent<br/>(Agent Framework)"]
-    A -->|MCP over toolbox| T["Foundry Toolbox<br/>knowledge-base-mcp connection"]
-    T -->|Agent identity<br/>(Entra ID)| KB["Knowledge base MCP<br/>knowledge_base_retrieve"]
+    U[User] --> A["Agent Framework agent<br/>(local or hosted)"]
+    A -->|MCP over toolbox| T["Foundry Toolbox"]
+    T -->|"User token (local)<br/>Agent identity (hosted)"| KB["Knowledge base MCP<br/>knowledge_base_retrieve"]
     KB --> KS[Knowledge source] --> IDX[(Azure AI Search index)]
     KB -.answer synthesis.-> M[[Azure OpenAI model]]
 ```
 
 1. **Knowledge base (data plane).** [`provision_kb.py`](src/agent-framework-foundry-iq-knowledge-base-responses/provision_kb.py) creates an Azure AI Search index, seeds it with the "Earth at night" documents, and builds a **knowledge source** and a **knowledge base**. The knowledge base synthesizes answers with an Azure OpenAI model and exposes an MCP endpoint (`{search}/knowledgebases/{kb}/mcp`) whose only tool is `knowledge_base_retrieve`.
-2. **Toolbox connection.** A `RemoteTool` **connection** (`knowledge-base-mcp`) authenticates to the knowledge base's MCP endpoint with **Agentic Identity** — the agent's managed identity, keyless. A **toolbox** (defined in [`toolbox.yaml`](src/agent-framework-foundry-iq-knowledge-base-responses/toolbox.yaml)) exposes that endpoint as an MCP tool: its `server_url` points at the knowledge base's MCP endpoint and `project_connection_id` supplies the connection's auth. Both are created for you by the `azd provision` `postprovision` hook (see [Provision and run the agent](#provision-and-run-the-agent)).
+2. **Toolbox connections.** The provisioning hook creates two keyless `RemoteTool` connections to the same knowledge base MCP endpoint:
+   - `knowledge-base-mcp-local` uses your **user Entra token** for local execution. The `knowledge-base-local` toolbox is defined in [`toolbox.local.yaml`](src/agent-framework-foundry-iq-knowledge-base-responses/toolbox.local.yaml).
+   - `knowledge-base-mcp` uses the hosted agent's **Agentic Identity**. The deployment toolbox is defined in [`toolbox.yaml`](src/agent-framework-foundry-iq-knowledge-base-responses/toolbox.yaml).
+
+   Local processes do not have hosted-agent identity IDs, so they must use the local connection. Both toolboxes expose the same `knowledge_base_retrieve` MCP tool.
 3. **Agent.** [`main.py`](src/agent-framework-foundry-iq-knowledge-base-responses/main.py) uses `FoundryChatClient` and connects to the toolbox's MCP endpoint with `FoundryToolbox`. The agent discovers `knowledge_base_retrieve` at runtime and grounds its answers in the retrieved sources.
 
 ### Model Integration
@@ -34,15 +38,18 @@ The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-
 | Search service managed identity | **Cognitive Services User** | Foundry account | Knowledge base calls the Azure OpenAI model for answer synthesis (keyless) |
 | You (provisioning) | **Search Service Contributor** | Search service | Create the index, knowledge source, and knowledge base |
 | You (provisioning) | **Search Index Data Contributor** | Search service | Upload the seed documents |
+| You (local execution) | **Search Index Data Reader** | Search service | Retrieve through the local user-token toolbox connection |
 | The agent's managed identity | **Search Index Data Reader** | Search service | The deployed agent retrieves from the knowledge base at query time |
 
 > The agent's managed identity is created when you deploy the agent. Grant it **Search Index Data Reader** on the search service after the first `azd deploy` (see [Grant the agent access](#grant-the-agent-access-to-the-knowledge-base)).
+>
+> **Search Index Data Contributor** includes document read access, so the provisioning role above also satisfies the local execution requirement.
 
 ## Provision and run the agent
 
 ### Option 1: Azure Developer CLI (`azd`)
 
-With the bundled `postprovision` hook, a single `azd provision` builds the knowledge base, creates the toolbox connection and toolbox, and sets `TOOLBOX_ENDPOINT` for you.
+With the bundled `postprovision` hook, a single `azd provision` builds the knowledge base, creates the local and hosted toolbox connections, and sets their endpoints for you.
 
 #### 1. Install prerequisites
 
@@ -66,11 +73,11 @@ mkdir my-foundry-iq-agent && cd my-foundry-iq-agent
 azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/17-foundry-iq-toolbox/azure.yaml
 ```
 
-Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one. Initializing also sets the selected project as the active project, and copies this sample's files into a new service directory `src/<agent-name>/` — including [`provision_kb.py`](src/agent-framework-foundry-iq-knowledge-base-responses/provision_kb.py), [`toolbox.yaml`](src/agent-framework-foundry-iq-knowledge-base-responses/toolbox.yaml), and the [`hooks/`](hooks/) scripts.
+Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one. Initializing also sets the selected project as the active project, and copies this sample's files into a new service directory `src/<agent-name>/` — including [`provision_kb.py`](src/agent-framework-foundry-iq-knowledge-base-responses/provision_kb.py), the two toolbox files, and the [`hooks/`](src/agent-framework-foundry-iq-knowledge-base-responses/hooks/) scripts.
 
 #### 3. Enable one-command provisioning (`postprovision` hook)
 
-Wire the bundled hook into the `azure.yaml` that `azd ai agent init` generated, so the knowledge base, connection, and toolbox are created automatically every time you run `azd provision`. `postprovision` must be registered at the **top level** of `azure.yaml` (service-scoped hooks only support the package/deploy lifecycle), and the `run:` path must point at the hook inside the generated service directory. Add this top-level block, replacing `<agent-name>` with the service folder `azd ai agent init` created under `src/`:
+Wire the bundled hook into the `azure.yaml` that `azd ai agent init` generated, so the knowledge base, connections, and toolboxes are created automatically every time you run `azd provision`. `postprovision` must be registered at the **top level** of `azure.yaml` (service-scoped hooks only support the package/deploy lifecycle), and the `run:` path must point at the hook inside the generated service directory. Add this top-level block, replacing `<agent-name>` with the service folder `azd ai agent init` created under `src/`:
 
 ```yaml
 hooks:
@@ -83,7 +90,7 @@ hooks:
       run: ./src/<agent-name>/hooks/postprovision.ps1
 ```
 
-The hook ([`hooks/postprovision.sh`](hooks/postprovision.sh) / [`hooks/postprovision.ps1`](hooks/postprovision.ps1)) runs everything the [manual steps](#provision-manually-without-the-hook) below would, in one shot. It locates its own directory, so it works no matter where `azd` runs it from.
+The hook ([`hooks/postprovision.sh`](src/agent-framework-foundry-iq-knowledge-base-responses/hooks/postprovision.sh) / [`hooks/postprovision.ps1`](src/agent-framework-foundry-iq-knowledge-base-responses/hooks/postprovision.ps1)) runs everything the [manual steps](#provision-manually-without-the-hook) below would, in one shot. It locates its own directory, so it works no matter where `azd` runs it from.
 
 #### 4. Provision
 
@@ -97,13 +104,15 @@ azd provision
 `azd provision` creates (or reuses) your Foundry project and model deployment, then the `postprovision` hook:
 
 1. Runs [`provision_kb.py`](src/agent-framework-foundry-iq-knowledge-base-responses/provision_kb.py) to build the search index, knowledge source, and knowledge base, and stores the KB's MCP endpoint as `KB_MCP_ENDPOINT`.
-2. Creates the `knowledge-base-mcp` `RemoteTool` connection (Agentic Identity, keyless) targeting that endpoint.
-3. Creates the `knowledge-base` toolbox from [`toolbox.yaml`](src/agent-framework-foundry-iq-knowledge-base-responses/toolbox.yaml).
-4. Sets `TOOLBOX_ENDPOINT` so the agent connects to the toolbox.
+2. Creates `knowledge-base-mcp-local` (user Entra token) and `knowledge-base-mcp` (Agentic Identity) connections targeting that endpoint.
+3. Creates `knowledge-base-local` from [`toolbox.local.yaml`](src/agent-framework-foundry-iq-knowledge-base-responses/toolbox.local.yaml) and `knowledge-base` from [`toolbox.yaml`](src/agent-framework-foundry-iq-knowledge-base-responses/toolbox.yaml).
+4. Sets `TOOLBOX_ENDPOINT` to the local toolbox and `TOOLBOX_DEPLOYMENT_ENDPOINT` to the hosted toolbox. [`azure.yaml`](azure.yaml) maps the hosted endpoint to `TOOLBOX_ENDPOINT` when deploying.
 
 > The hook derives `AZURE_OPENAI_ENDPOINT` from your Foundry project endpoint for answer synthesis. To use a different Azure OpenAI resource, set it explicitly first: `azd env set AZURE_OPENAI_ENDPOINT "https://<account>.openai.azure.com"`.
 
 #### 5. Run the agent locally
+
+The hook selects the user-token toolbox through `TOOLBOX_ENDPOINT`, so the local process authenticates as your signed-in Azure CLI user rather than requiring a hosted-agent identity.
 
 ```bash
 azd ai agent run
@@ -120,6 +129,8 @@ azd ai agent invoke --local "What can you tell me about the Earth at night?"
 ```
 
 #### Deploy to Foundry
+
+The deployment manifest injects `TOOLBOX_DEPLOYMENT_ENDPOINT` as the hosted agent's `TOOLBOX_ENDPOINT`, preserving Agentic Identity for the deployed agent.
 
 ```bash
 azd deploy
@@ -150,6 +161,7 @@ azd ai agent invoke "What can you tell me about the Earth at night?"
 Prefer to run the steps yourself (or skip the hook)? Provision the knowledge base directly from the project directory, with `az login` done:
 
 ```bash
+cd src/<agent-name>
 pip install requests azure-identity python-dotenv
 
 export AZURE_SEARCH_ENDPOINT="https://<your-search>.search.windows.net"
@@ -165,16 +177,24 @@ azd ai connection create knowledge-base-mcp --kind remote-tool \
   --target "<kb-mcp-endpoint>" \
   --auth-type agentic-identity --audience https://search.azure.com --metadata "ApiType=Azure"
 
-# toolbox.yaml uses ${KB_MCP_ENDPOINT} for the tool's server_url — replace it with
-# the endpoint provision_kb.py printed (or export KB_MCP_ENDPOINT and envsubst it).
-azd ai toolbox create knowledge-base --from-file ./toolbox.yaml
+# Local execution uses the signed-in user's Entra token because no hosted-agent
+# identity exists in the local process.
+azd ai connection create knowledge-base-mcp-local --kind remote-tool \
+  --target "<kb-mcp-endpoint>" \
+  --auth-type user-entra-token --audience https://search.azure.com --metadata "ApiType=Azure"
 
-azd env set TOOLBOX_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/knowledge-base/mcp?api-version=v1"
+# Both toolbox files use ${KB_MCP_ENDPOINT} for server_url. Replace it with the
+# endpoint provision_kb.py printed (or export KB_MCP_ENDPOINT and use envsubst).
+azd ai toolbox create knowledge-base --from-file ./toolbox.yaml
+azd ai toolbox create knowledge-base-local --from-file ./toolbox.local.yaml
+
+azd env set TOOLBOX_DEPLOYMENT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/knowledge-base/mcp?api-version=v1"
+azd env set TOOLBOX_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/knowledge-base-local/mcp?api-version=v1"
 ```
 
 ## Option 2: VS Code (Foundry Toolkit)
 
-> The VS Code flow doesn't run the `azd` hook — provision the knowledge base, connection, and toolbox first with [Provision manually](#provision-manually-without-the-hook).
+> The VS Code flow doesn't run the `azd` hook — provision the knowledge base, connections, and toolboxes first with [Provision manually](#provision-manually-without-the-hook).
 
 1. Open the sample folder in VS Code (after `azd ai agent init` from Option 1).
 2. Press **F5** to run and debug the agent. The **Agent Inspector** opens automatically — chat with the agent in the Inspector.
