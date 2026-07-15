@@ -67,6 +67,51 @@ $FOUNDRY_ACCOUNT_NAME = "<your-foundry-account-name>"
 $FOUNDRY_PROJECT_NAME = "<your-foundry-project-name>"
 ```
 
+## Run locally
+
+Local runs use your developer identity, so it needs **Foundry User** on the
+project, **Storage Blob Data Reader** on the input container, and **Storage Blob
+Data Contributor** on the summary container. Create a sample-specific `azd`
+environment and configure the existing resources:
+
+```powershell
+$AZD_ENV = "event-grid-trigger-local"
+$FOUNDRY_PROJECT_ENDPOINT = "https://<account>.services.ai.azure.com/api/projects/<project>"
+$AZURE_AI_MODEL_DEPLOYMENT_NAME = "<model-deployment-name>"
+
+azd env new $AZD_ENV
+azd env set FOUNDRY_PROJECT_ENDPOINT $FOUNDRY_PROJECT_ENDPOINT -e $AZD_ENV
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME $AZURE_AI_MODEL_DEPLOYMENT_NAME -e $AZD_ENV
+azd env set AZURE_STORAGE_ACCOUNT_NAME $AZURE_STORAGE_ACCOUNT_NAME -e $AZD_ENV
+azd env set AZURE_STORAGE_SUMMARY_CONTAINER_NAME $SUMMARY_CONTAINER -e $AZD_ENV
+```
+
+Start the agent:
+
+```powershell
+azd ai agent run --no-client -e $AZD_ENV
+```
+
+In another terminal, upload a representative input and invoke the local
+Invocations endpoint with its direct payload shape:
+
+```powershell
+"Hosted agents can summarize blob-created event inputs locally." | Set-Content hello.txt
+az storage blob upload `
+  --account-name $AZURE_STORAGE_ACCOUNT_NAME `
+  -c $INPUT_CONTAINER -f hello.txt -n hello.txt --auth-mode login
+
+'{"container":"<your-input-container>","name":"hello.txt"}' |
+  Set-Content invoke.json -Encoding ascii
+azd ai agent invoke --local --protocol invocations `
+  --input-file invoke.json -e $AZD_ENV
+```
+
+A successful response identifies `hello.txt`, the sibling summary blob, and a
+non-empty model-generated summary. Confirm that `hello.txt.summary.json`
+exists in `$SUMMARY_CONTAINER`, then remove the local `hello.txt` and
+`invoke.json` files when finished.
+
 ## 1. Deploy the agent
 
 [azure.yaml](azure.yaml) declares two environment variables and binds each value to an `${...}` placeholder that `azd` resolves from the **azd environment** at deploy time (your shell's `export` / `$env:` values are not propagated to the deployed agent). Set them once with `azd env set` before deploying:

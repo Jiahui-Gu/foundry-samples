@@ -60,7 +60,7 @@ _model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
 _storage_account = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "")
 _summary_container = os.environ.get("AZURE_STORAGE_SUMMARY_CONTAINER_NAME", "")
 
-_credential = DefaultAzureCredential()
+_credential = DefaultAzureCredential(process_timeout=60)
 _project_client = AIProjectClient(endpoint=_endpoint, credential=_credential)
 _openai_client = _project_client.get_openai_client()
 
