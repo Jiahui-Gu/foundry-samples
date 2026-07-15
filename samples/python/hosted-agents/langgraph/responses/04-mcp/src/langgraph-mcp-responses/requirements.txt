@@ -3,6 +3,8 @@ azure-ai-projects
 langchain
 langchain-openai
 langchain-mcp-adapters
+mcp>=1.28.1,<2
+pydantic<2.14
 python-dotenv
 
 # debugpy enables local debugging of this agent with the Foundry Toolkit VS Code extension.
