@@ -298,3 +298,20 @@ You can also deploy directly from the editor (see [Using the Foundry Toolkit VS 
 #### Troubleshooting
 
 **Azure OpenAI permission denied (401):** the identity running the agent does not have the required RBAC roles on the Foundry project. Assign **Cognitive Services OpenAI User** and **Azure AI User** to the agent's identity (it may take a few minutes for role assignments to propagate). See the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent) for details.
+
+**`ImportError: DLL load failed ... The filename or extension is too long` when running `python main.py` on Windows ([Using `python`](#using-python)):** this happens when the repository is cloned into a deeply nested folder, causing the `.venv` site-packages path (used by native-extension dependencies such as `cryptography`) to exceed Windows' 260-character `MAX_PATH` limit. Fix by either:
+
+- Creating the virtual environment outside the deeply nested project path and activating it before running the agent, for example:
+
+  ```powershell
+  python -m venv C:\venvs\agent-framework-agent
+  C:\venvs\agent-framework-agent\Scripts\Activate.ps1
+  pip install -r requirements.txt
+  python main.py
+  ```
+
+- Or enabling Windows long path support once, from an elevated PowerShell prompt, then reopening your terminal:
+
+  ```powershell
+  New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWord -Force
+  ```
