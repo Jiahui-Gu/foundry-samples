@@ -27,13 +27,36 @@ A minimal getting-started agent implementing the [AG-UI protocol](https://docs.a
 - Python 3.10+
 - A Foundry project with a deployed model
 
+### Configure the environment
+
+`azd ai agent run` requires `FOUNDRY_PROJECT_ENDPOINT` and
+`AZURE_AI_MODEL_DEPLOYMENT_NAME` to be resolved in the azd environment before
+it starts the agent — otherwise `main.py` fails immediately with
+`FOUNDRY_PROJECT_ENDPOINT environment variable is not set`.
+
+If you haven't provisioned this sample's own Foundry project + model
+deployment yet, run:
+
+```bash
+azd provision
+```
+
+If you already have a Foundry project with a compatible model deployed (for
+example from another sample or an existing environment), you can point at it
+directly without provisioning new resources:
+
+```bash
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<deployment-name>"
+```
+
 ### Run the agent locally
 
 ```bash
 azd ai agent run
 ```
 
-The agent starts on `http://localhost:8088/`.
+The agent starts on `http://localhost:8088/`. If port 8088 is already in use, pass `--port <port>` to select a different one.
 
 ### Invoke the local agent
 
