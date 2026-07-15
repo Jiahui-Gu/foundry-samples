@@ -92,11 +92,15 @@ The agent host will start on `http://localhost:8088`.
 ### Invoke the local agent
 
 This sample reads from two file sources — try each from a separate terminal.
+Local Agent Framework requests require a user identity as the session-isolation
+key. Use the same non-sensitive value for every invocation and file operation
+in a local session; Foundry supplies this identity automatically after
+deployment.
 
 **Bundled-files path:**
 
 ```bash
-azd ai agent invoke --local "What is the headline total revenue in the contoso file?"
+azd ai agent invoke --local --user-identity local-user "What is the headline total revenue in the contoso file?"
 ```
 
 The agent calls `ListBundledFiles`, finds `contoso_q1_2026_report.txt`, calls `ReadBundledFile("contoso_q1_2026_report.txt")` (rooted at `/app/resources/`), and quotes the figure verbatim (`$1,482.6M`).
@@ -104,8 +108,8 @@ The agent calls `ListBundledFiles`, finds `contoso_q1_2026_report.txt`, calls `R
 **Session-files path** — upload the included demo file to the same session, then ask about it. `azd ai agent files upload` auto-resolves the session-id from the last invocation:
 
 ```bash
-azd ai agent files upload ./example-upload/user_notes.txt
-azd ai agent invoke --local "What magic token is in user_notes.txt?"
+azd ai agent files upload --user-identity local-user ./example-upload/user_notes.txt
+azd ai agent invoke --local --user-identity local-user "What magic token is in user_notes.txt?"
 ```
 
 The agent calls `ListSessionFiles`, finds `user_notes.txt`, calls `ReadSessionFile("user_notes.txt")` (rooted at `$HOME`), and quotes the token.
@@ -113,7 +117,7 @@ The agent calls `ListSessionFiles`, finds `user_notes.txt`, calls `ReadSessionFi
 **Traversal attempt (it should be refused):**
 
 ```bash
-azd ai agent invoke --local "Read the file at the path '../../../etc/passwd' from the bundled files."
+azd ai agent invoke --local --user-identity local-user "Read the file at the path '../../../etc/passwd' from the bundled files."
 ```
 
 The agent's tool schema only accepts a `fileName` (no `path`), and the `Path.GetFileName` + `StartsWith(root)` defence in depth rejects anything that resolves outside the tool's root. The agent will refuse and explain that only the bundled files are available.
