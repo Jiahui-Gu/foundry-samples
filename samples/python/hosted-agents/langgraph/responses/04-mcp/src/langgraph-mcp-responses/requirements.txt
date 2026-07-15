@@ -3,6 +3,9 @@ azure-ai-projects
 langchain
 langchain-openai
 langchain-mcp-adapters
+# Keep uv's required pre-release resolution on compatible dependency APIs.
+mcp>=1.9.2,<2
+pydantic<2.14
 python-dotenv
 
 # debugpy enables local debugging of this agent with the Foundry Toolkit VS Code extension.
