@@ -105,22 +105,25 @@ The agent host will start on `http://localhost:8088`.
 In a separate terminal, invoke the running agent:
 
 ```bash
-azd ai agent invoke --local "What is your return policy?"
+azd ai agent invoke --local --user-identity local-user "What is your return policy?"
 ```
 
-Or use curl directly:
+The local user identity is required to isolate the agent's conversation state. When using curl directly, send the equivalent `x-agent-user-id` header:
 
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "What is your return policy?", "stream": false}' | jq .
 
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "How long does shipping take?", "stream": false}' | jq .
 
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "How do I clean my tent?", "stream": false}' | jq .
 ```
 
