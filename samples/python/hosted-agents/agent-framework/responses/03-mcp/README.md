@@ -120,6 +120,24 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 4. On **Review + Deploy**, confirm runtime details, pick **CPU and Memory** size, and click **Deploy**.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
+## Troubleshooting
+
+### Model deployment rate limit exceeded
+
+If a local invocation returns `429` or `rate_limit_exceeded`, switch to an
+already-provisioned Foundry project and model deployment that has available
+quota. Set both values in the active `azd` environment so the project endpoint
+and deployment stay paired, then restart the local agent:
+
+```bash
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<deployment-name>"
+azd ai agent run
+```
+
+For the manual Python path, set the same values in `.env` instead. This reuses
+existing resources; it does not provision or deploy anything.
+
 ## Next steps
 
 - [Quickstart: Create a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent) — end-to-end walkthrough using `azd`
