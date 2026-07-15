@@ -6,6 +6,8 @@ using System.Text.Json.Nodes;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
+#pragma warning disable MEAI001
+
 namespace HarnessAgentDiagnostics;
 
 public static class ContentProjection
@@ -57,7 +59,9 @@ public static class ContentProjection
                 result["details"] = ProjectSafeValue(error.Details);
                 break;
             case DataContent data:
-                result["uri"] = ProjectSafeValue(data.Uri);
+                result["uri"] = data.Uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : ProjectSafeValue(data.Uri);
                 result["mediaType"] = data.MediaType;
                 result["name"] = data.Name;
                 result["dataLength"] = data.Data.Length;
@@ -65,6 +69,51 @@ public static class ContentProjection
             case UriContent uri:
                 result["uri"] = ProjectSafeValue(uri.Uri);
                 result["mediaType"] = uri.MediaType;
+                break;
+            case HostedFileContent hostedFile:
+                result["fileId"] = hostedFile.FileId;
+                result["mediaType"] = hostedFile.MediaType;
+                result["name"] = hostedFile.Name;
+                result["sizeInBytes"] = hostedFile.SizeInBytes;
+                result["createdAt"] = ProjectSafeValue(hostedFile.CreatedAt);
+                result["purpose"] = hostedFile.Purpose;
+                result["scope"] = hostedFile.Scope;
+                break;
+            case HostedVectorStoreContent hostedVectorStore:
+                result["vectorStoreId"] = hostedVectorStore.VectorStoreId;
+                break;
+            case McpServerToolCallContent mcpCall:
+                result["callId"] = mcpCall.CallId;
+                result["name"] = mcpCall.Name;
+                result["serverName"] = mcpCall.ServerName;
+                result["arguments"] = ProjectSafeValue(mcpCall.Arguments);
+                break;
+            case McpServerToolResultContent mcpResult:
+                result["callId"] = mcpResult.CallId;
+                result["outputs"] = ProjectContents(mcpResult.Outputs);
+                break;
+            case CodeInterpreterToolCallContent codeInterpreterCall:
+                result["callId"] = codeInterpreterCall.CallId;
+                result["inputs"] = ProjectContents(codeInterpreterCall.Inputs);
+                break;
+            case CodeInterpreterToolResultContent codeInterpreterResult:
+                result["callId"] = codeInterpreterResult.CallId;
+                result["outputs"] = ProjectContents(codeInterpreterResult.Outputs);
+                break;
+            case WebSearchToolCallContent webSearchCall:
+                result["callId"] = webSearchCall.CallId;
+                result["queries"] = ProjectSafeValue(webSearchCall.Queries);
+                break;
+            case WebSearchToolResultContent webSearchResult:
+                result["callId"] = webSearchResult.CallId;
+                result["outputs"] = ProjectContents(webSearchResult.Outputs);
+                break;
+            case ImageGenerationToolCallContent imageGenerationCall:
+                result["callId"] = imageGenerationCall.CallId;
+                break;
+            case ImageGenerationToolResultContent imageGenerationResult:
+                result["callId"] = imageGenerationResult.CallId;
+                result["outputs"] = ProjectContents(imageGenerationResult.Outputs);
                 break;
             case ToolApprovalRequestContent approvalRequest:
                 result["requestId"] = approvalRequest.RequestId;
@@ -83,6 +132,9 @@ public static class ContentProjection
 
         return result;
     }
+
+    private static JsonArray ProjectContents(IEnumerable<AIContent>? contents)
+        => contents is null ? [] : new JsonArray(contents.Select(Project).ToArray());
 
     public static JsonObject Project(AgentResponseUpdate update)
     {
@@ -176,10 +228,18 @@ public static class ContentProjection
     }
 
     private static bool HasCompilerGeneratedAutoPropertyGetter(PropertyInfo property)
-        => property.GetMethod?.IsDefined(typeof(CompilerGeneratedAttribute), inherit: true) == true
-            && property.DeclaringType?.GetField(
-                $"<{property.Name}>k__BackingField",
-                BindingFlags.Instance | BindingFlags.NonPublic) is not null;
+    {
+        Type? declaringType = property.DeclaringType;
+        bool compilerGenerated = property.GetMethod?.IsDefined(typeof(CompilerGeneratedAttribute), inherit: true) == true
+            || declaringType?.IsDefined(typeof(CompilerGeneratedAttribute), inherit: true) == true;
+        return compilerGenerated
+            && (declaringType?.GetField(
+                    $"<{property.Name}>k__BackingField",
+                    BindingFlags.Instance | BindingFlags.NonPublic) is not null
+                || declaringType?.GetField(
+                    $"<{property.Name}>i__Field",
+                    BindingFlags.Instance | BindingFlags.NonPublic) is not null);
+    }
 
     private static JsonObject OpaqueType(Type type)
         => new() { ["type"] = type.FullName };
@@ -209,6 +269,11 @@ public static class ContentProjection
         if (depth == 8)
         {
             return new JsonObject { ["type"] = value.GetType().FullName };
+        }
+
+        if (value is IEnumerable<KeyValuePair<string, object?>> properties)
+        {
+            return ProjectAdditionalProperties(properties);
         }
 
         if (value is IDictionary dictionary)

@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -202,20 +203,31 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
                 continue;
             }
 
-            object? propertyValue;
-            try
+            if (!HasCompilerGeneratedAutoPropertyGetter(property))
             {
-                propertyValue = property.GetValue(value);
-            }
-            catch (Exception)
-            {
+                properties[property.Name] = new JsonObject { ["type"] = property.PropertyType.FullName };
                 continue;
             }
 
+            object? propertyValue = property.GetValue(value);
             properties[property.Name] = CreateSafeNode(propertyValue, depth + 1);
         }
 
         return properties;
+    }
+
+    private static bool HasCompilerGeneratedAutoPropertyGetter(PropertyInfo property)
+    {
+        Type? declaringType = property.DeclaringType;
+        bool compilerGenerated = property.GetMethod?.IsDefined(typeof(CompilerGeneratedAttribute), inherit: true) == true
+            || declaringType?.IsDefined(typeof(CompilerGeneratedAttribute), inherit: true) == true;
+        return compilerGenerated
+            && (declaringType?.GetField(
+                    $"<{property.Name}>k__BackingField",
+                    BindingFlags.Instance | BindingFlags.NonPublic) is not null
+                || declaringType?.GetField(
+                    $"<{property.Name}>i__Field",
+                    BindingFlags.Instance | BindingFlags.NonPublic) is not null);
     }
 
     private static bool IsCredentialOrToken(Type type)
@@ -353,6 +365,10 @@ internal sealed partial class SensitiveValueSanitizer
         sanitized = CredentialAssignmentRegex().Replace(sanitized, "${name}=[REDACTED]");
         sanitized = AzureResourceIdRegex().Replace(sanitized, match => GetAlias("azure-resource", match.Value));
         sanitized = OpenAiIdentifierRegex().Replace(sanitized, match => GetAlias(GetOpenAiIdentifierCategory(match.Value), match.Value));
+        Regex toolIdentifierRegex = IsIdentifierProperty(propertyName)
+            ? ToolIdentifierRegex()
+            : ToolIdentifierWithDigitRegex();
+        sanitized = toolIdentifierRegex.Replace(sanitized, match => GetAlias("tool", match.Value));
 
         if (IsGuidIdentifierProperty(propertyName))
         {
@@ -437,6 +453,15 @@ internal sealed partial class SensitiveValueSanitizer
                 || propertyName.Contains("span", StringComparison.OrdinalIgnoreCase)
                 || propertyName.Contains("parent", StringComparison.OrdinalIgnoreCase));
 
+    private static bool IsIdentifierProperty(string? propertyName)
+        => propertyName is not null
+            && (propertyName.Equals("id", StringComparison.OrdinalIgnoreCase)
+                || propertyName.EndsWith("Id", StringComparison.Ordinal)
+                || propertyName.EndsWith("ID", StringComparison.Ordinal)
+                || propertyName.EndsWith("_id", StringComparison.OrdinalIgnoreCase)
+                || propertyName.EndsWith("-id", StringComparison.OrdinalIgnoreCase)
+                || propertyName.Contains("identifier", StringComparison.OrdinalIgnoreCase));
+
     [GeneratedRegex(@"(?i)\bbearer\s+(?<token>[a-z0-9\-._~+/]+=*)")]
     private static partial Regex BearerTokenRegex();
 
@@ -454,6 +479,12 @@ internal sealed partial class SensitiveValueSanitizer
 
     [GeneratedRegex(@"\b(?:resp|msg|item|call|fc|rs)_[a-zA-Z0-9_-]{8,}\b")]
     private static partial Regex OpenAiIdentifierRegex();
+
+    [GeneratedRegex(@"\btool_[a-zA-Z0-9_-]{8,}\b")]
+    private static partial Regex ToolIdentifierRegex();
+
+    [GeneratedRegex(@"\btool_(?=[a-zA-Z0-9_-]{8,}\b)(?=[a-zA-Z0-9_-]*\d)[a-zA-Z0-9_-]+\b")]
+    private static partial Regex ToolIdentifierWithDigitRegex();
 
     [GeneratedRegex(@"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")]
     private static partial Regex GuidRegex();

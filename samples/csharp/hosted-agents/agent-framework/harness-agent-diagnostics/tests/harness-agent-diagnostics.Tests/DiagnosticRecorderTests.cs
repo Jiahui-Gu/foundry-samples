@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using HarnessAgentDiagnostics;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -42,6 +43,93 @@ public sealed class DiagnosticRecorderTests
             JsonElement root = document.RootElement;
             Assert.Equal(root.GetProperty("responseId").GetString(), root.GetProperty("repeatedResponseId").GetString());
             Assert.StartsWith("response-", root.GetProperty("responseId").GetString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordProviderStateAsync_DoesNotInvokeCustomGetters()
+    {
+        string outputDirectory = CreateOutputDirectory();
+        ThrowingProviderState providerState = new();
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordProviderStateAsync(providerState);
+            }
+
+            Assert.False(providerState.GetterInvoked);
+
+            using JsonDocument document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(outputDirectory, "provider-state.jsonl")));
+            JsonElement root = document.RootElement;
+            Assert.Equal("visible", root.GetProperty("Safe").GetString());
+            Assert.Equal(typeof(string).FullName, root.GetProperty("Throws").GetProperty("type").GetString());
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordProviderStateAsync_RecordsAnonymousRecordAndJsonObjectSnapshots()
+    {
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordProviderStateAsync(new { kind = "anonymous", value = 1 });
+                await recorder.RecordProviderStateAsync(new ProviderStateRecord("record", 2));
+                await recorder.RecordProviderStateAsync(new JsonObject { ["kind"] = "json", ["value"] = 3 });
+            }
+
+            string[] lines = await File.ReadAllLinesAsync(Path.Combine(outputDirectory, "provider-state.jsonl"));
+            Assert.Equal(["anonymous", "record", "json"], lines.Select(ReadProviderKind));
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordProviderStateAsync_AliasesToolIdentifiersWithoutChangingOrdinaryProse()
+    {
+        const string toolId = "tool_0123456789abcdefghijk";
+        const string alphabeticToolId = "tool_abcdefghijklmnop";
+        const string prose = "Keep tool_assistance as ordinary prose.";
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordProviderStateAsync(new
+                {
+                    toolId,
+                    repeatedToolId = toolId,
+                    alphabeticToolId,
+                    text = prose,
+                });
+            }
+
+            using JsonDocument document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(outputDirectory, "provider-state.jsonl")));
+            JsonElement root = document.RootElement;
+            Assert.DoesNotContain(toolId, root.GetRawText(), StringComparison.Ordinal);
+            Assert.Equal(root.GetProperty("toolId").GetString(), root.GetProperty("repeatedToolId").GetString());
+            Assert.StartsWith("tool-", root.GetProperty("toolId").GetString(), StringComparison.Ordinal);
+            Assert.DoesNotContain(alphabeticToolId, root.GetRawText(), StringComparison.Ordinal);
+            Assert.StartsWith("tool-", root.GetProperty("alphabeticToolId").GetString(), StringComparison.Ordinal);
+            Assert.Equal(prose, root.GetProperty("text").GetString());
         }
         finally
         {
@@ -239,8 +327,33 @@ public sealed class DiagnosticRecorderTests
         }
     }
 
+    private static string? ReadProviderKind(string line)
+    {
+        using JsonDocument document = JsonDocument.Parse(line);
+        JsonElement root = document.RootElement;
+        return root.GetProperty(root.TryGetProperty("kind", out _) ? "kind" : "Kind").GetString();
+    }
+
     private sealed class OpaqueCredential(string secret)
     {
         public string Secret { get; } = secret;
     }
+
+    private sealed class ThrowingProviderState
+    {
+        public bool GetterInvoked { get; private set; }
+
+        public string Safe { get; } = "visible";
+
+        public string Throws
+        {
+            get
+            {
+                GetterInvoked = true;
+                throw new InvalidOperationException("must not be invoked");
+            }
+        }
+    }
+
+    private sealed record ProviderStateRecord(string Kind, int Value);
 }

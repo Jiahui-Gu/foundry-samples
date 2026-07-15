@@ -3,6 +3,8 @@ using HarnessAgentDiagnostics;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
+#pragma warning disable MEAI001
+
 namespace HarnessAgentDiagnostics.Tests;
 
 public sealed class ContentProjectionTests
@@ -58,6 +60,116 @@ public sealed class ContentProjectionTests
         Assert.True(fallbackNumbers[fallbackNumbers.GetArrayLength() - 1].GetProperty("truncated").GetBoolean());
         Assert.DoesNotContain("do not serialize this exception", json, StringComparison.Ordinal);
         Assert.DoesNotContain("raw-secret", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Project_ProjectsHostedAndHostedToolContentSafelyInOrder()
+    {
+        DateTimeOffset createdAt = new(2026, 7, 15, 9, 0, 0, TimeSpan.Zero);
+        AIContent[] contents =
+        [
+            new HostedFileContent("file_0123456789")
+            {
+                MediaType = "text/plain",
+                Name = "probe.txt",
+                SizeInBytes = 12,
+                CreatedAt = createdAt,
+                Purpose = "assistants",
+                Scope = "probe-scope",
+                RawRepresentation = new RawEnvelope(),
+            },
+            new HostedVectorStoreContent("vs_0123456789")
+            {
+                RawRepresentation = new RawEnvelope(),
+            },
+            new McpServerToolCallContent("call_mcp_0123456789", "lookup", "probe-server")
+            {
+                Arguments = new Dictionary<string, object?> { ["term"] = "safe" },
+                RawRepresentation = new RawEnvelope(),
+            },
+            new McpServerToolResultContent("call_mcp_0123456789")
+            {
+                Outputs = [new TextContent("mcp-output-1"), new TextContent("mcp-output-2")],
+                RawRepresentation = new RawEnvelope(),
+            },
+            new CodeInterpreterToolCallContent("call_code_0123456789")
+            {
+                Inputs = [new TextContent("first input"), new TextContent("second input")],
+                RawRepresentation = new RawEnvelope(),
+            },
+            new CodeInterpreterToolResultContent("call_code_0123456789")
+            {
+                Outputs = [new TextContent("code-output-1"), new TextContent("code-output-2")],
+                RawRepresentation = new RawEnvelope(),
+            },
+            new WebSearchToolCallContent("call_web_0123456789")
+            {
+                Queries = ["first query", "second query"],
+                RawRepresentation = new RawEnvelope(),
+            },
+            new WebSearchToolResultContent("call_web_0123456789")
+            {
+                Outputs =
+                [
+                    new UriContent(new Uri("https://example.test/first"), "text/html"),
+                    new UriContent(new Uri("https://example.test/second"), "text/html"),
+                ],
+                RawRepresentation = new RawEnvelope(),
+            },
+            new ImageGenerationToolCallContent("call_image_0123456789")
+            {
+                AdditionalProperties = new AdditionalPropertiesDictionary(
+                    new Dictionary<string, object?> { ["prompt"] = "safe prompt" }),
+                RawRepresentation = new RawEnvelope(),
+            },
+            new ImageGenerationToolResultContent("call_image_0123456789")
+            {
+                Outputs =
+                [
+                    new DataContent(new byte[] { 1, 2, 3 }, "image/png") { Name = "generated.png" },
+                    new UriContent(new Uri("https://example.test/generated.png"), "image/png"),
+                ],
+                RawRepresentation = new RawEnvelope(),
+            },
+        ];
+
+        JsonElement projected = JsonSerializer.SerializeToElement(ContentProjection.Project(contents));
+        JsonElement items = projected.GetProperty("contents");
+
+        Assert.Equal(contents.Select(content => content.GetType().Name), items.EnumerateArray().Select(item => item.GetProperty("type").GetString()));
+        Assert.Equal("file_0123456789", items[0].GetProperty("fileId").GetString());
+        Assert.Equal("text/plain", items[0].GetProperty("mediaType").GetString());
+        Assert.Equal("probe.txt", items[0].GetProperty("name").GetString());
+        Assert.Equal(12, items[0].GetProperty("sizeInBytes").GetInt64());
+        Assert.Equal(createdAt, items[0].GetProperty("createdAt").GetDateTimeOffset());
+        Assert.Equal("assistants", items[0].GetProperty("purpose").GetString());
+        Assert.Equal("probe-scope", items[0].GetProperty("scope").GetString());
+        Assert.Equal("vs_0123456789", items[1].GetProperty("vectorStoreId").GetString());
+        Assert.Equal("call_mcp_0123456789", items[2].GetProperty("callId").GetString());
+        Assert.Equal("lookup", items[2].GetProperty("name").GetString());
+        Assert.Equal("probe-server", items[2].GetProperty("serverName").GetString());
+        Assert.Equal("safe", items[2].GetProperty("arguments").GetProperty("term").GetString());
+        Assert.Equal("call_mcp_0123456789", items[3].GetProperty("callId").GetString());
+        Assert.Equal(["mcp-output-1", "mcp-output-2"], ProjectedTexts(items[3], "outputs"));
+        Assert.Equal("call_code_0123456789", items[4].GetProperty("callId").GetString());
+        Assert.Equal(["first input", "second input"], ProjectedTexts(items[4], "inputs"));
+        Assert.Equal("call_code_0123456789", items[5].GetProperty("callId").GetString());
+        Assert.Equal(["code-output-1", "code-output-2"], ProjectedTexts(items[5], "outputs"));
+        Assert.Equal("call_web_0123456789", items[6].GetProperty("callId").GetString());
+        Assert.Equal(["first query", "second query"], StringValues(items[6], "queries"));
+        Assert.Equal("call_web_0123456789", items[7].GetProperty("callId").GetString());
+        Assert.Equal(
+            ["https://example.test/first", "https://example.test/second"],
+            items[7].GetProperty("outputs").EnumerateArray().Select(output => output.GetProperty("uri").GetString()));
+        Assert.Equal("call_image_0123456789", items[8].GetProperty("callId").GetString());
+        Assert.Equal("safe prompt", items[8].GetProperty("additionalProperties").GetProperty("prompt").GetString());
+        Assert.Equal("call_image_0123456789", items[9].GetProperty("callId").GetString());
+        Assert.Equal("generated.png", items[9].GetProperty("outputs")[0].GetProperty("name").GetString());
+        Assert.Equal(3, items[9].GetProperty("outputs")[0].GetProperty("dataLength").GetInt32());
+        Assert.Equal(JsonValueKind.Null, items[9].GetProperty("outputs")[0].GetProperty("uri").ValueKind);
+        Assert.Equal("https://example.test/generated.png", items[9].GetProperty("outputs")[1].GetProperty("uri").GetString());
+        Assert.All(items.EnumerateArray(), item => Assert.Equal(typeof(RawEnvelope).FullName, item.GetProperty("rawRepresentationType").GetString()));
+        Assert.DoesNotContain("AQID", projected.GetRawText(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -118,4 +230,10 @@ public sealed class ContentProjectionTests
     }
 
     private sealed class RawEnvelope;
+
+    private static IEnumerable<string?> ProjectedTexts(JsonElement content, string propertyName)
+        => content.GetProperty(propertyName).EnumerateArray().Select(item => item.GetProperty("text").GetString());
+
+    private static IEnumerable<string?> StringValues(JsonElement content, string propertyName)
+        => content.GetProperty(propertyName).EnumerateArray().Select(item => item.GetString());
 }
