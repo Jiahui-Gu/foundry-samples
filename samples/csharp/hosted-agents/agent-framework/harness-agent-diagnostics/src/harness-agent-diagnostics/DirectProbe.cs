@@ -42,8 +42,9 @@ public sealed class DirectProbe
         List<string> contentTypes = [];
         List<ProbeFailure> failures = [];
         List<ActivitySnapshot> activities = [];
+        List<ExceptionDispatchInfo> secondaryErrors = [];
         ProbeProviderSnapshot? lastSnapshot = null;
-        ExceptionDispatchInfo? capturedError = null;
+        ExceptionDispatchInfo? primaryError = null;
         int updateCount = 0;
         int contentCount = 0;
         int turn = 0;
@@ -139,21 +140,80 @@ public sealed class DirectProbe
         catch (Exception exception)
         {
             failures.Add(new ProbeFailure(PhaseForTurn(turn), exception.GetType().Name));
-            capturedError = ExceptionDispatchInfo.Capture(exception);
-            ProbeProviderSnapshot failureSnapshot = CreateFailureSnapshot(lastSnapshot, turn, failures);
-            await RecordProviderSnapshotAsync(failureSnapshot, CancellationToken.None).ConfigureAwait(false);
-            lastSnapshot = failureSnapshot;
+            primaryError = ExceptionDispatchInfo.Capture(exception);
+
+            ProbeProviderSnapshot? failureSnapshot = null;
+            string snapshotGap;
+            if (session is null)
+            {
+                snapshotGap = "failure-snapshot:unavailable";
+            }
+            else
+            {
+                try
+                {
+                    failureSnapshot = await CaptureSnapshotAsync(
+                        "final",
+                        turn,
+                        "none",
+                        session,
+                        failures,
+                        ["probe:failed"],
+                        CancellationToken.None).ConfigureAwait(false);
+                    lastSnapshot = failureSnapshot;
+                    snapshotGap = string.Empty;
+                }
+                catch (Exception snapshotException)
+                {
+                    secondaryErrors.Add(ExceptionDispatchInfo.Capture(snapshotException));
+                    failures.Add(new ProbeFailure("failure-snapshot", snapshotException.GetType().Name));
+                    snapshotGap = "failure-snapshot:failed";
+                }
+            }
+
+            try
+            {
+                if (failureSnapshot is not null)
+                {
+                    await RecordProviderSnapshotAsync(failureSnapshot, CancellationToken.None).ConfigureAwait(false);
+                }
+                else
+                {
+                    await _recorder.RecordProviderStateAsync(
+                        CreateFailureEvidence(turn, failures, snapshotGap),
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+            catch (Exception evidenceException)
+            {
+                secondaryErrors.Add(ExceptionDispatchInfo.Capture(evidenceException));
+            }
         }
         finally
         {
-            activities.AddRange(activityCapture.Drain());
+            try
+            {
+                activities.AddRange(activityCapture.Drain());
+            }
+            catch (Exception drainException)
+            {
+                secondaryErrors.Add(ExceptionDispatchInfo.Capture(drainException));
+            }
+
             foreach (ActivitySnapshot activity in activities)
             {
-                await _recorder.RecordActivityAsync(activity, CancellationToken.None).ConfigureAwait(false);
+                try
+                {
+                    await _recorder.RecordActivityAsync(activity, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception activityException)
+                {
+                    secondaryErrors.Add(ExceptionDispatchInfo.Capture(activityException));
+                }
             }
         }
 
-        capturedError?.Throw();
+        ThrowIfFailed(primaryError, secondaryErrors);
         if (lastSnapshot is null)
         {
             throw new InvalidOperationException("The probe did not capture provider state.");
@@ -220,6 +280,27 @@ public sealed class DirectProbe
         IReadOnlyList<ProbeFailure> failures,
         CancellationToken cancellationToken)
     {
+        ProbeProviderSnapshot snapshot = await CaptureSnapshotAsync(
+            phase,
+            turn,
+            transitionSource,
+            session,
+            failures,
+            gaps: null,
+            cancellationToken).ConfigureAwait(false);
+        await RecordProviderSnapshotAsync(snapshot, cancellationToken).ConfigureAwait(false);
+        return snapshot;
+    }
+
+    private async Task<ProbeProviderSnapshot> CaptureSnapshotAsync(
+        string phase,
+        int turn,
+        string transitionSource,
+        AgentSession session,
+        IReadOnlyList<ProbeFailure> failures,
+        IEnumerable<string>? gaps,
+        CancellationToken cancellationToken)
+    {
         string mode = await _runtime.GetModeAsync(session, cancellationToken).ConfigureAwait(false);
         IReadOnlyList<TodoItem> liveTodos = await _runtime.GetTodosAsync(session, cancellationToken).ConfigureAwait(false);
         IReadOnlyList<ProbeMemoryFileSnapshot> liveMemory =
@@ -236,55 +317,92 @@ public sealed class DirectProbe
                 todo.IsComplete)),
             liveMemory.Select(file => new ProbeMemoryFileSnapshot(file.Path, file.Content)),
             transitionSource,
-            failures);
-        await RecordProviderSnapshotAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            failures,
+            gaps);
         return snapshot;
     }
 
     private Task RecordProviderSnapshotAsync(
         ProbeProviderSnapshot snapshot,
         CancellationToken cancellationToken)
-        => _recorder.RecordProviderStateAsync(
-            new JsonObject
-            {
-                ["phase"] = snapshot.Phase,
-                ["turn"] = snapshot.Turn,
-                ["mode"] = snapshot.Mode,
-                ["todos"] = new JsonArray(snapshot.Todos.Select(todo => new JsonObject
-                {
-                    ["id"] = todo.Id,
-                    ["title"] = todo.Title,
-                    ["description"] = todo.Description,
-                    ["isComplete"] = todo.IsComplete,
-                }).ToArray()),
-                ["memoryFiles"] = new JsonArray(snapshot.MemoryFiles.Select(file => new JsonObject
-                {
-                    ["path"] = file.Path,
-                    ["content"] = file.Content,
-                }).ToArray()),
-                ["transitionSource"] = snapshot.TransitionSource,
-                ["failures"] = new JsonArray(snapshot.Failures.Select(failure => new JsonObject
-                {
-                    ["phase"] = failure.Phase,
-                    ["kind"] = failure.Kind,
-                }).ToArray()),
-                ["gaps"] = new JsonArray(snapshot.Gaps.Select(gap => JsonValue.Create(gap)).ToArray()),
-            },
-            cancellationToken);
+        => _recorder.RecordProviderStateAsync(CreateProviderState(snapshot), cancellationToken);
 
-    private static ProbeProviderSnapshot CreateFailureSnapshot(
-        ProbeProviderSnapshot? lastSnapshot,
+    private static JsonObject CreateProviderState(ProbeProviderSnapshot snapshot)
+        => new()
+        {
+            ["phase"] = snapshot.Phase,
+            ["turn"] = snapshot.Turn,
+            ["mode"] = snapshot.Mode,
+            ["todos"] = new JsonArray(snapshot.Todos.Select(todo => new JsonObject
+            {
+                ["id"] = todo.Id,
+                ["title"] = todo.Title,
+                ["description"] = todo.Description,
+                ["isComplete"] = todo.IsComplete,
+            }).ToArray()),
+            ["memoryFiles"] = new JsonArray(snapshot.MemoryFiles.Select(file => new JsonObject
+            {
+                ["path"] = file.Path,
+                ["content"] = file.Content,
+            }).ToArray()),
+            ["transitionSource"] = snapshot.TransitionSource,
+            ["failures"] = CreateFailures(snapshot.Failures),
+            ["gaps"] = new JsonArray(snapshot.Gaps.Select(gap => JsonValue.Create(gap)).ToArray()),
+        };
+
+    private static JsonObject CreateFailureEvidence(
         int turn,
-        IReadOnlyList<ProbeFailure> failures)
-        => new(
-            "final",
-            turn,
-            lastSnapshot?.Mode ?? "unknown",
-            lastSnapshot?.Todos ?? [],
-            lastSnapshot?.MemoryFiles ?? [],
-            "none",
-            failures,
-            ["probe:failed"]);
+        IReadOnlyList<ProbeFailure> failures,
+        string snapshotGap)
+        => new()
+        {
+            ["phase"] = "final",
+            ["turn"] = turn,
+            ["transitionSource"] = "none",
+            ["failures"] = CreateFailures(failures),
+            ["gaps"] = new JsonArray(
+                new[] { "probe:failed", snapshotGap }
+                   .Where(gap => !string.IsNullOrEmpty(gap))
+                   .Select(gap => JsonValue.Create(gap))
+                   .ToArray()),
+        };
+
+    private static JsonArray CreateFailures(IEnumerable<ProbeFailure> failures)
+        => new(failures.Select(failure => new JsonObject
+        {
+            ["phase"] = failure.Phase,
+            ["kind"] = failure.Kind,
+        }).ToArray());
+
+    private static void ThrowIfFailed(
+        ExceptionDispatchInfo? primaryError,
+        IReadOnlyList<ExceptionDispatchInfo> secondaryErrors)
+    {
+        if (primaryError is not null)
+        {
+            if (secondaryErrors.Count == 0)
+            {
+                primaryError.Throw();
+            }
+
+            throw new AggregateException(
+                "The probe failed and secondary diagnostic failures occurred.",
+                new[] { primaryError.SourceException }
+                   .Concat(secondaryErrors.Select(error => error.SourceException)));
+        }
+
+        if (secondaryErrors.Count == 1)
+        {
+            secondaryErrors[0].Throw();
+        }
+
+        if (secondaryErrors.Count > 1)
+        {
+            throw new AggregateException(
+                "Multiple diagnostic failures occurred.",
+                secondaryErrors.Select(error => error.SourceException));
+        }
+    }
 
     private static IReadOnlyList<string> FindMissingSignals(
         ProbeProviderSnapshot snapshot,

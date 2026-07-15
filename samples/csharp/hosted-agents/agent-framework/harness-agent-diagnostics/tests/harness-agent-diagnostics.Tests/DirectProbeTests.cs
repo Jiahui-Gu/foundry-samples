@@ -207,6 +207,151 @@ public sealed class DirectProbeTests
         }
     }
 
+    [Fact]
+    public async Task RunAsync_PartialRuntimeFailureRecordsFreshStateAndPreservesPrimaryException()
+    {
+        const string secret = "TOP-SECRET-PARTIAL-RUNTIME-VALUE";
+        string outputDirectory = CreateOutputDirectory();
+        using ScriptedProbeRuntime runtime = ScriptedProbeRuntime.PartialExecuteFailure(
+            "tests.direct-probe.partial-failure",
+            secret);
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                DirectProbe probe = new(runtime, recorder, runtime.ActivitySourceName);
+
+                InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => probe.RunAsync());
+
+                Assert.Same(runtime.RuntimeFailure, exception);
+                Assert.Contains(nameof(ScriptedProbeRuntime.RunStreamingAsync), exception.StackTrace);
+            }
+
+            JsonElement[] updates = await ReadRecordsAsync(
+                Path.Combine(outputDirectory, "agent-response-updates.jsonl"));
+            Assert.Contains(
+                updates,
+                update => update.GetProperty("phase").GetString() == "execute"
+                    && update.GetProperty("update").GetProperty("text").GetString() == "EXECUTE_PARTIAL");
+
+            JsonElement failureSnapshot = (await ReadRecordsAsync(
+                    Path.Combine(outputDirectory, "provider-state.jsonl")))
+                .Select(record => record.GetProperty("providerState"))
+                .Last();
+            Assert.Equal("final", failureSnapshot.GetProperty("phase").GetString());
+            Assert.Equal("execute", failureSnapshot.GetProperty("mode").GetString());
+            Assert.All(
+                failureSnapshot.GetProperty("todos").EnumerateArray(),
+                todo => Assert.True(todo.GetProperty("isComplete").GetBoolean()));
+            Assert.Equal(
+                "label=maf-probe; values=3,1,4",
+                failureSnapshot.GetProperty("memoryFiles")[0].GetProperty("content").GetString());
+            Assert.Contains(
+                failureSnapshot.GetProperty("failures").EnumerateArray(),
+                failure => failure.GetProperty("phase").GetString() == "execute"
+                    && failure.GetProperty("kind").GetString() == nameof(InvalidOperationException));
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    public async Task RunAsync_RecorderFailuresKeepRuntimeExceptionPrimaryAndExplicit(int failingWrite)
+    {
+        const string secret = "TOP-SECRET-RECORDER-RUNTIME-VALUE";
+        string outputDirectory = CreateOutputDirectory();
+        using ScriptedProbeRuntime runtime = ScriptedProbeRuntime.PartialExecuteFailure(
+            $"tests.direct-probe.recorder-failure.{failingWrite}",
+            secret);
+        IOException recorderFailure = new($"injected recorder failure {failingWrite}");
+        int writeCount = 0;
+
+        try
+        {
+            await using var recorder = new DiagnosticRecorder(
+                outputDirectory,
+                sensitiveValues: null,
+                _ =>
+                {
+                    writeCount++;
+                    return writeCount == failingWrite
+                        ? Task.FromException(recorderFailure)
+                        : Task.CompletedTask;
+                });
+            DirectProbe probe = new(runtime, recorder, runtime.ActivitySourceName);
+
+            AggregateException exception = await Assert.ThrowsAsync<AggregateException>(
+                () => probe.RunAsync());
+
+            Assert.Same(runtime.RuntimeFailure, exception.InnerExceptions[0]);
+            Assert.Same(recorderFailure, exception.InnerExceptions[1]);
+            Assert.Contains(nameof(ScriptedProbeRuntime.RunStreamingAsync), exception.InnerExceptions[0].StackTrace);
+            Assert.Contains(nameof(DiagnosticRecorder), exception.InnerExceptions[1].StackTrace);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_FreshFailureSnapshotErrorIsSecondaryAndDoesNotInventProviderState()
+    {
+        const string runtimeSecret = "TOP-SECRET-SNAPSHOT-RUNTIME-VALUE";
+        const string snapshotSecret = "TOP-SECRET-SNAPSHOT-QUERY-VALUE";
+        string outputDirectory = CreateOutputDirectory();
+        using ScriptedProbeRuntime runtime = ScriptedProbeRuntime.FailureSnapshotFails(
+            "tests.direct-probe.snapshot-failure",
+            runtimeSecret,
+            snapshotSecret);
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                DirectProbe probe = new(runtime, recorder, runtime.ActivitySourceName);
+
+                AggregateException exception = await Assert.ThrowsAsync<AggregateException>(
+                    () => probe.RunAsync());
+
+                Assert.Same(runtime.RuntimeFailure, exception.InnerExceptions[0]);
+                Assert.Same(runtime.SnapshotFailure, exception.InnerExceptions[1]);
+            }
+
+            JsonElement failureEvidence = (await ReadRecordsAsync(
+                    Path.Combine(outputDirectory, "provider-state.jsonl")))
+                .Select(record => record.GetProperty("providerState"))
+                .Last();
+            Assert.Equal("final", failureEvidence.GetProperty("phase").GetString());
+            Assert.False(failureEvidence.TryGetProperty("mode", out _));
+            Assert.False(failureEvidence.TryGetProperty("todos", out _));
+            Assert.False(failureEvidence.TryGetProperty("memoryFiles", out _));
+            Assert.Contains(
+                failureEvidence.GetProperty("failures").EnumerateArray(),
+                failure => failure.GetProperty("phase").GetString() == "failure-snapshot"
+                    && failure.GetProperty("kind").GetString() == nameof(IOException));
+            Assert.Contains(
+                failureEvidence.GetProperty("gaps").EnumerateArray(),
+                gap => gap.GetString() == "failure-snapshot:failed");
+
+            string providerJsonl = await File.ReadAllTextAsync(
+                Path.Combine(outputDirectory, "provider-state.jsonl"));
+            Assert.DoesNotContain(runtimeSecret, providerJsonl, StringComparison.Ordinal);
+            Assert.DoesNotContain(snapshotSecret, providerJsonl, StringComparison.Ordinal);
+            Assert.DoesNotContain("StackTrace", providerJsonl, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
     private static async Task<JsonElement[]> ReadRecordsAsync(string path)
     {
         string[] lines = await File.ReadAllLinesAsync(path);
@@ -232,17 +377,28 @@ public sealed class DirectProbeTests
     {
         private readonly ActivitySource _activitySource;
         private readonly Scenario _scenario;
-        private readonly string? _failureSecret;
         private readonly List<TodoItem> _todos = [];
         private readonly List<ProbeMemoryFileSnapshot> _memoryFiles = [];
+        private readonly InvalidOperationException? _runtimeFailure;
+        private readonly IOException? _snapshotFailure;
         private string _mode = "plan";
+        private bool _runtimeFailed;
 
-        private ScriptedProbeRuntime(string activitySourceName, Scenario scenario, string? failureSecret = null)
+        private ScriptedProbeRuntime(
+            string activitySourceName,
+            Scenario scenario,
+            string? failureSecret = null,
+            string? snapshotFailureSecret = null)
         {
             ActivitySourceName = activitySourceName;
             _activitySource = new ActivitySource(activitySourceName);
             _scenario = scenario;
-            _failureSecret = failureSecret;
+            _runtimeFailure = failureSecret is null
+                ? null
+                : new InvalidOperationException($"{failureSecret}\n at scripted-stack");
+            _snapshotFailure = snapshotFailureSecret is null
+                ? null
+                : new IOException($"{snapshotFailureSecret}\n at scripted-snapshot-stack");
         }
 
         internal string ActivitySourceName { get; }
@@ -252,6 +408,10 @@ public sealed class DirectProbeTests
         internal int SetModeCount { get; private set; }
 
         internal List<string> Prompts { get; } = [];
+
+        internal InvalidOperationException RuntimeFailure => _runtimeFailure!;
+
+        internal IOException SnapshotFailure => _snapshotFailure!;
 
         internal static ScriptedProbeRuntime HappyPath(string sourceName)
             => new(sourceName, Scenario.Happy);
@@ -264,6 +424,15 @@ public sealed class DirectProbeTests
 
         internal static ScriptedProbeRuntime ExecuteFailure(string sourceName, string secret)
             => new(sourceName, Scenario.ExecuteFailure, secret);
+
+        internal static ScriptedProbeRuntime PartialExecuteFailure(string sourceName, string secret)
+            => new(sourceName, Scenario.PartialExecuteFailure, secret);
+
+        internal static ScriptedProbeRuntime FailureSnapshotFails(
+            string sourceName,
+            string runtimeSecret,
+            string snapshotSecret)
+            => new(sourceName, Scenario.FailureSnapshot, runtimeSecret, snapshotSecret);
 
         public ValueTask<AgentSession> CreateSessionAsync(CancellationToken cancellationToken)
         {
@@ -294,7 +463,17 @@ public sealed class DirectProbeTests
             {
                 if (_scenario == Scenario.ExecuteFailure)
                 {
-                    throw new InvalidOperationException($"{_failureSecret}\n at scripted-stack");
+                    throw _runtimeFailure!;
+                }
+
+                if (_scenario is Scenario.PartialExecuteFailure or Scenario.FailureSnapshot)
+                {
+                    CompleteProbe();
+                    yield return new AgentResponseUpdate(
+                        ChatRole.Assistant,
+                        [new TextContent("EXECUTE_PARTIAL")]);
+                    _runtimeFailed = true;
+                    throw _runtimeFailure!;
                 }
 
                 if (_scenario != Scenario.ModeFailure)
@@ -326,7 +505,9 @@ public sealed class DirectProbeTests
         }
 
         public Task<string> GetModeAsync(AgentSession session, CancellationToken cancellationToken)
-            => Task.FromResult(_mode);
+            => _scenario == Scenario.FailureSnapshot && _runtimeFailed
+                ? Task.FromException<string>(_snapshotFailure!)
+                : Task.FromResult(_mode);
 
         public Task SetModeAsync(
             AgentSession session,
@@ -374,6 +555,8 @@ public sealed class DirectProbeTests
             ModeFailure,
             RemainingTodos,
             ExecuteFailure,
+            PartialExecuteFailure,
+            FailureSnapshot,
         }
 
         private sealed class ScriptedSession : AgentSession;
