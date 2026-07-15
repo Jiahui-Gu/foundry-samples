@@ -72,6 +72,12 @@ azd ai agent run
 
 The agent host will start on `http://localhost:8088`.
 
+If port 8088 is already in use, start the host on another port:
+
+```bash
+azd ai agent run --port 18090
+```
+
 > Because the observability exporters are managed by Foundry, this sample is best run with `azd ai agent run`. Running with `dotnet run` sends telemetry to Application Insights only if you set `APPLICATIONINSIGHTS_CONNECTION_STRING` yourself.
 
 ### Invoke the local agent
@@ -79,7 +85,16 @@ The agent host will start on `http://localhost:8088`.
 In a separate terminal, invoke the agent:
 
 ```bash
-azd ai agent invoke --local "What is the current weather?"
+azd ai agent invoke --local --user-identity local-user "What is the current weather?"
+```
+
+Local runs do not receive Foundry's hosted user identity header, so
+`--user-identity` supplies the identity required for session isolation.
+
+When using a custom port, pass the same port to the invoke command:
+
+```bash
+azd ai agent invoke --local --port 18090 --user-identity local-user "What is the current weather?"
 ```
 
 Several spans are created for this request from Agent Framework's instrumentation:
