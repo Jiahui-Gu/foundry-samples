@@ -55,9 +55,9 @@ shuttle audio bytes and control events.
 | [azure.yaml](azure.yaml) | `azd ai agent init` manifest. |
 | [Dockerfile](src/hello-world-dotnet-invocations-ws/Dockerfile) | `mcr.microsoft.com/dotnet/sdk:10.0-alpine` build → `aspnet:10.0-alpine` runtime. |
 | [.env.example](src/hello-world-dotnet-invocations-ws/.env.example) | Required Voice Live env vars. |
-| [chat_client/index.html](chat_client/index.html) | Standalone browser client (mic + transcript) for local dev. |
-| [chat_client/Proxy](chat_client/Proxy/Program.cs) | ASP.NET Core proxy that serves `index.html` and injects an `Authorization: Bearer` header onto the upstream WebSocket — used to talk to a deployed Foundry agent from the browser. |
-| [E2ELocal](E2ELocal/Program.cs) | Headless console test that sends a text turn and asserts audio + events come back. |
+| [chat_client/index.html](src/hello-world-dotnet-invocations-ws/chat_client/index.html) | Standalone browser client (mic + transcript) for local dev. |
+| [chat_client/Proxy](src/hello-world-dotnet-invocations-ws/chat_client/Proxy/Program.cs) | ASP.NET Core proxy that serves `index.html` and injects an `Authorization: Bearer` header onto the upstream WebSocket — used to talk to a deployed Foundry agent from the browser. |
+| [E2ELocal](src/hello-world-dotnet-invocations-ws/E2ELocal/Program.cs) | Headless console test that sends a text turn and asserts audio + events come back. |
 
 ## Prerequisites
 
@@ -94,18 +94,21 @@ cd samples/csharp/hosted-agents/bring-your-own/invocations_ws/HelloWorld
 
 export AZURE_VOICELIVE_ENDPOINT="https://<account>.cognitiveservices.azure.com/"
 export AZURE_VOICELIVE_MODEL="gpt-realtime-1.5"
+export PORT=8088 # Agent Server default; choose another available port if needed.
 
-dotnet run
-# → Now listening on: http://0.0.0.0:8088
+dotnet run --project src/hello-world-dotnet-invocations-ws/HelloWorld.csproj
+# → Now listening on: http://0.0.0.0:${PORT}
 ```
 
 ### Headless E2E test
 
-In a second terminal:
+In a second terminal, set `PORT` to the same value as the agent:
 
 ```bash
 cd samples/csharp/hosted-agents/bring-your-own/invocations_ws/HelloWorld
-dotnet run --project E2ELocal
+export PORT=8088
+dotnet run --project src/hello-world-dotnet-invocations-ws/E2ELocal/E2ELocal.csproj -- \
+  --url "ws://localhost:${PORT}/invocations_ws"
 # [e2e] session_started:    True
 # [e2e] audio_bytes recvd:  230400
 # [e2e] response_done seen: 1
@@ -122,20 +125,21 @@ spoken utterance — server-VAD is bypassed entirely.
 To run the same test against a deployed Foundry agent:
 
 ```bash
-dotnet run --project E2ELocal -- \
+dotnet run --project src/hello-world-dotnet-invocations-ws/E2ELocal/E2ELocal.csproj -- \
   --foundry "https://<account>.services.ai.azure.com/api/projects/<project>" \
   --agent hello-world-dotnet-invocations-ws
 ```
 
 ### Browser test (standalone client)
 
-The sample ships a tiny single-file browser client in [`chat_client/`](chat_client/index.html).
+The sample ships a tiny single-file browser client in
+[`chat_client/`](src/hello-world-dotnet-invocations-ws/chat_client/index.html).
 Because most browsers refuse mic access from `file://` URLs and Foundry
 requires an `Authorization` header on the WebSocket, the page is meant
 to be served by the bundled proxy, which also bridges the upstream WS:
 
 ```bash
-dotnet run --project chat_client/Proxy -- \
+dotnet run --project src/hello-world-dotnet-invocations-ws/chat_client/Proxy/Proxy.csproj -- \
   --foundry "https://<account>.services.ai.azure.com/api/projects/<project>" \
   --agent hello-world-dotnet-invocations-ws
 ```
@@ -144,10 +148,11 @@ Open <http://localhost:8765/>, click **▶ Start**, allow mic access, and
 speak. The page's default WebSocket URL is auto-set to the proxy
 (`ws://localhost:8765/invocations_ws`).
 
-For a pure local-only round trip (no Foundry), run `dotnet run` in this
-folder and then open the page however you like (e.g. via the proxy or
-your favorite static file server) — the default WS URL is
-`ws://localhost:8088/invocations_ws`.
+For a pure local-only round trip (no Foundry), run the main project as
+shown above and then open the page however you like (e.g. via the proxy
+or your favorite static file server). Point it to
+`ws://localhost:<PORT>/invocations_ws`, using the port configured for
+the agent.
 
 ## Deploying to Microsoft Foundry
 
@@ -224,8 +229,9 @@ Where the segments come from:
 Every request must also include `Authorization: Bearer <Entra token>`
 for the `https://ai.azure.com` resource. Browsers can't set headers
 on a `WebSocket`, which is why the bundled
-[`chat_client/Proxy`](chat_client/Proxy) injects the token server-side
-and the [`E2ELocal`](E2ELocal) CLI does the same via
+[`chat_client/Proxy`](src/hello-world-dotnet-invocations-ws/chat_client/Proxy)
+injects the token server-side and the
+[`E2ELocal`](src/hello-world-dotnet-invocations-ws/E2ELocal) CLI does the same via
 `az account get-access-token`.
 
 Then test the hosted agent end-to-end with the bundled CLI (which sends
@@ -234,7 +240,7 @@ this on a WebSocket, so the standalone `chat_client/index.html` is for
 local dev only):
 
 ```bash
-dotnet run --project E2ELocal -- \
+dotnet run --project src/hello-world-dotnet-invocations-ws/E2ELocal/E2ELocal.csproj -- \
   --foundry "https://<account>.services.ai.azure.com/api/projects/<project>" \
   --agent hello-world-dotnet-invocations-ws
 ```
