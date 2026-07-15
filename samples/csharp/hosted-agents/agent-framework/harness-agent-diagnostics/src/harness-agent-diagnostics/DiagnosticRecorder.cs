@@ -562,6 +562,12 @@ internal sealed partial class SensitiveValueSanitizer
 
     private string SanitizeString(string text, string? propertyName)
     {
+        if (IsUnsafeTelemetryTextProperty(propertyName)
+            || ExceptionOrStackTextRegex().IsMatch(text))
+        {
+            return "[REDACTED]";
+        }
+
         if (_registeredValues.Contains(text, StringComparer.Ordinal))
         {
             return GetRegisteredAlias(text);
@@ -705,6 +711,23 @@ internal sealed partial class SensitiveValueSanitizer
         => propertyName is not null
             && NormalizePropertyName(propertyName) == "continuationtoken";
 
+    private static bool IsUnsafeTelemetryTextProperty(string? propertyName)
+    {
+        if (propertyName is null)
+        {
+            return false;
+        }
+
+        return NormalizePropertyName(propertyName) is
+            "statusdescription"
+            or "exceptionmessage"
+            or "exceptionstacktrace"
+            or "errormessage"
+            or "errorstacktrace"
+            or "stacktrace"
+            or "stack";
+    }
+
     private static bool IsCredentialBearingProperty(string normalized)
     {
         if (normalized == "continuationtoken")
@@ -792,4 +815,7 @@ internal sealed partial class SensitiveValueSanitizer
 
     [GeneratedRegex(@"\b(?:[0-9a-fA-F]{16}|[0-9a-fA-F]{32})\b")]
     private static partial Regex HexIdentifierRegex();
+
+    [GeneratedRegex(@"(?im)(?:^|\r?\n)\s*(?:at\s+\S+|---\s*End of (?:inner exception )?stack trace\s*---|(?:Caused by:\s+)?[A-Za-z_][\w.`+]*(?:Exception|Error)\s*:)", RegexOptions.CultureInvariant)]
+    private static partial Regex ExceptionOrStackTextRegex();
 }

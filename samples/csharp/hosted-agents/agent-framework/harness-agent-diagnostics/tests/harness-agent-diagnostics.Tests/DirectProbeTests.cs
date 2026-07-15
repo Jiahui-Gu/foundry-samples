@@ -208,6 +208,72 @@ public sealed class DirectProbeTests
     }
 
     [Fact]
+    public async Task RunAsync_ErrorActivityRedactsExceptionAndSecretDataButKeepsStructuralEvidence()
+    {
+        string outputDirectory = CreateOutputDirectory();
+        using ScriptedProbeRuntime runtime = ScriptedProbeRuntime.ActivityFailure(
+            "tests.direct-probe.activity-failure");
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(
+                outputDirectory,
+                [
+                    ScriptedProbeRuntime.ActivityEndpoint,
+                    ScriptedProbeRuntime.ActivityResourceSecret,
+                ]))
+            {
+                DirectProbe probe = new(runtime, recorder, runtime.ActivitySourceName);
+                await Assert.ThrowsAsync<InvalidOperationException>(() => probe.RunAsync());
+            }
+
+            string[] jsonlFiles = Directory.GetFiles(outputDirectory, "*.jsonl");
+            Assert.NotEmpty(jsonlFiles);
+            foreach (string file in jsonlFiles)
+            {
+                string jsonl = await File.ReadAllTextAsync(file);
+                Assert.DoesNotContain(ScriptedProbeRuntime.ActivityFailureSecret, jsonl, StringComparison.Ordinal);
+                Assert.DoesNotContain(ScriptedProbeRuntime.ActivityCredential, jsonl, StringComparison.Ordinal);
+                Assert.DoesNotContain(ScriptedProbeRuntime.ActivityEndpoint, jsonl, StringComparison.Ordinal);
+                Assert.DoesNotContain(ScriptedProbeRuntime.ActivityResourceSecret, jsonl, StringComparison.Ordinal);
+                Assert.DoesNotContain("System.InvalidOperationException:", jsonl, StringComparison.Ordinal);
+                Assert.DoesNotContain(" at HarnessAgentDiagnostics.", jsonl, StringComparison.Ordinal);
+            }
+
+            JsonElement errorActivity = Assert.Single(
+                await ReadRecordsAsync(Path.Combine(outputDirectory, "activities.jsonl")),
+                activity => activity.GetProperty("OperationName").GetString() == "error.activity");
+            Assert.Equal((int)ActivityStatusCode.Error, errorActivity.GetProperty("Status").GetInt32());
+            Assert.Equal("[REDACTED]", errorActivity.GetProperty("StatusDescription").GetString());
+            Assert.Equal("error.activity", errorActivity.GetProperty("DisplayName").GetString());
+
+            JsonElement[] tags = errorActivity.GetProperty("tags").EnumerateArray().ToArray();
+            Assert.Equal(2, tags.Count(tag => tag.GetProperty("key").GetString() == "exception.message"));
+            Assert.Equal(
+                ["System.InvalidOperationException", "System.ArgumentException"],
+                tags
+                    .Where(tag => tag.GetProperty("key").GetString() == "exception.type")
+                    .Select(tag => tag.GetProperty("value").GetString()));
+            Assert.All(
+                tags.Where(tag => tag.GetProperty("key").GetString() is
+                    "exception.message" or "exception.stacktrace" or "error.message" or "stackTrace" or "stack" or "diagnostic.detail"),
+                tag => Assert.Equal("[REDACTED]", tag.GetProperty("value").GetString()));
+            Assert.Equal(
+                "gpt-4.1-mini",
+                Assert.Single(tags, tag => tag.GetProperty("key").GetString() == "model.version")
+                    .GetProperty("value")
+                    .GetString());
+            Assert.Contains(
+                errorActivity.GetProperty("events").EnumerateArray(),
+                activityEvent => activityEvent.GetProperty("Name").GetString() == "failure.observed");
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_PartialRuntimeFailureRecordsFreshStateAndPreservesPrimaryException()
     {
         const string secret = "TOP-SECRET-PARTIAL-RUNTIME-VALUE";
@@ -375,6 +441,11 @@ public sealed class DirectProbeTests
 
     private sealed class ScriptedProbeRuntime : IDirectProbeRuntime, IDisposable
     {
+        internal const string ActivityCredential = "activity-access-token-value";
+        internal const string ActivityEndpoint = "https://secret-project.services.ai.azure.com/api/projects/private";
+        internal const string ActivityFailureSecret = "TOP-SECRET-ACTIVITY-FAILURE";
+        internal const string ActivityResourceSecret = "/subscriptions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/resourceGroups/private";
+
         private readonly ActivitySource _activitySource;
         private readonly Scenario _scenario;
         private readonly List<TodoItem> _todos = [];
@@ -425,6 +496,9 @@ public sealed class DirectProbeTests
         internal static ScriptedProbeRuntime ExecuteFailure(string sourceName, string secret)
             => new(sourceName, Scenario.ExecuteFailure, secret);
 
+        internal static ScriptedProbeRuntime ActivityFailure(string sourceName)
+            => new(sourceName, Scenario.ActivityFailure, ActivityFailureSecret);
+
         internal static ScriptedProbeRuntime PartialExecuteFailure(string sourceName, string secret)
             => new(sourceName, Scenario.PartialExecuteFailure, secret);
 
@@ -447,7 +521,14 @@ public sealed class DirectProbeTests
         {
             Prompts.Add(prompt);
             bool isPlan = prompt == DirectProbePrompts.Plan;
-            using Activity? activity = _activitySource.StartActivity(isPlan ? "plan.activity" : prompt == DirectProbePrompts.Execute ? "execute.activity" : "recovery.activity");
+            using Activity? activity = _activitySource.StartActivity(
+                isPlan
+                    ? "plan.activity"
+                    : _scenario == Scenario.ActivityFailure
+                        ? "error.activity"
+                        : prompt == DirectProbePrompts.Execute
+                            ? "execute.activity"
+                            : "recovery.activity");
 
             await Task.Yield();
             cancellationToken.ThrowIfCancellationRequested();
@@ -461,6 +542,34 @@ public sealed class DirectProbeTests
 
             if (prompt == DirectProbePrompts.Execute)
             {
+                if (_scenario == Scenario.ActivityFailure)
+                {
+                    activity!.SetStatus(
+                        ActivityStatusCode.Error,
+                        $"Request failed with {ActivityFailureSecret}\n   at HarnessAgentDiagnostics.SecretClient.Send()");
+                    activity.AddTag("exception.message", $"Unsafe exception text {ActivityFailureSecret}");
+                    activity.AddTag("exception.message", $"Second unsafe exception text {ActivityCredential}");
+                    activity.AddTag("exception.stacktrace", $"System.InvalidOperationException: {ActivityFailureSecret}\n   at HarnessAgentDiagnostics.SecretClient.Send()");
+                    activity.AddTag("exception.type", "System.InvalidOperationException");
+                    activity.AddTag("exception.type", "System.ArgumentException");
+                    activity.AddTag("error.message", $"Endpoint {ActivityEndpoint} failed");
+                    activity.AddTag("stackTrace", $"System.Exception: {ActivityResourceSecret}\n   at HarnessAgentDiagnostics.OtherClient.Send()");
+                    activity.AddTag("stack", $"Raw failure\n   at HarnessAgentDiagnostics.Stack.Run()");
+                    activity.AddTag("diagnostic.detail", $"System.Exception: raw text\n   at HarnessAgentDiagnostics.Detail.Run()");
+                    activity.AddTag("access_token", ActivityCredential);
+                    activity.AddTag("endpoint", ActivityEndpoint);
+                    activity.AddTag("resource.secret", ActivityResourceSecret);
+                    activity.AddTag("model.version", "gpt-4.1-mini");
+                    activity.AddEvent(new ActivityEvent(
+                        "failure.observed",
+                        tags: new ActivityTagsCollection
+                        {
+                            ["error.message"] = $"Nested unsafe exception {ActivityFailureSecret}",
+                            ["exception.type"] = "System.InvalidOperationException",
+                        }));
+                    throw _runtimeFailure!;
+                }
+
                 if (_scenario == Scenario.ExecuteFailure)
                 {
                     throw _runtimeFailure!;
@@ -555,6 +664,7 @@ public sealed class DirectProbeTests
             ModeFailure,
             RemainingTodos,
             ExecuteFailure,
+            ActivityFailure,
             PartialExecuteFailure,
             FailureSnapshot,
         }
