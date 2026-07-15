@@ -4,8 +4,9 @@
 
 For each ``skills/<name>/SKILL.md`` file in this directory, this script packages
 the file as an in-memory ZIP and imports it through the Foundry project's
-:class:`~azure.ai.projects.aio.AIProjectClient` so the skill becomes downloadable
-by any hosted agent in the project.
+:class:`~azure.ai.projects.aio.AIProjectClient` (via ``beta.skills.create_from_files``,
+a multipart upload of the ZIP) so the skill becomes downloadable by any hosted
+agent in the project.
 
 If a skill with the same name already exists in Foundry, it is deleted first
 so the script is safe to re-run after editing a ``SKILL.md`` file.
@@ -68,8 +69,13 @@ async def main() -> None:
             name = skill_md.parent.name
             print(f"Provisioning skill '{name}' from {skill_md.relative_to(SKILLS_DIR.parent)}...")
             await _delete_skill_if_exists(project, name)
-            imported = await project.beta.skills.create_from_package(_zip_skill_md(skill_md))
-            print(f"  Imported skill '{imported.name}' (id={imported.skill_id}, has_blob={imported.has_blob}).")
+            # The installed azure-ai-projects SDK exposes skill-version creation from
+            # uploaded files as `create_from_files` (multipart, "files" field), not the
+            # `create_from_package` helper referenced by older docs/snippets.
+            imported = await project.beta.skills.create_from_files(
+                name, {"files": [("SKILL.zip", _zip_skill_md(skill_md), "application/zip")]}
+            )
+            print(f"  Imported skill '{imported.name}' (skill_id={imported.skill_id}, version={imported.version}).")
 
         print("Verifying skills via project.beta.skills.list()...")
         listed = {skill.name: skill async for skill in project.beta.skills.list()}
@@ -79,8 +85,8 @@ async def main() -> None:
             if skill is None:
                 raise RuntimeError(f"Skill '{name}' was imported but is not present in the project listing.")
             print(
-                f"  OK '{skill.name}': id={skill.skill_id}, "
-                f"description={skill.description!r}, has_blob={skill.has_blob}"
+                f"  OK '{skill.name}': id={skill.id}, "
+                f"description={skill.description!r}, latest_version={skill.latest_version}"
             )
 
     print("Done.")
