@@ -110,6 +110,17 @@ builder.Services.AddFoundryResponses(agent);
 // some regions reject. This wrapper overrides the scope while using DefaultAzureCredential.
 builder.Services.AddSingleton<TokenCredential>(new ToolboxScopedCredential(new DefaultAzureCredential()));
 
+// The Foundry hosting layer resolves per-request session identity from the platform-injected
+// x-agent-user-id header. That header is only present when the platform hosts the container,
+// so local runs (dotnet run / azd ai agent run / azd ai agent invoke --local, or a plain curl
+// against http://localhost:8088/responses as documented in the README) hit a 500 with
+// "HostedSessionIsolationKeyProvider returned null" unless a fallback provider is registered.
+// Register one here so local invocation works out of the box while still honoring the real
+// platform header when present (hosted/production behavior is unaffected).
+#pragma warning disable MAAI001 // HostedSessionIsolationKeyProvider is experimental
+builder.Services.AddSingleton<HostedSessionIsolationKeyProvider, LocalDevHostedSessionIsolationKeyProvider>();
+#pragma warning restore MAAI001
+
 builder.Services.AddFoundryToolboxes(opt => opt.ApiVersion = "v1", toolboxName);
 builder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
 

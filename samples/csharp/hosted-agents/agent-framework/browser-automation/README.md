@@ -249,6 +249,16 @@ Complete the toolbox setup in [Provision Azure resources](#provision-azure-resou
 - Add new tools in `utils/Tools.cs`.
 - Modify middleware logic in `utils/Middlewares.cs`.
 
+## Troubleshooting
+
+- **Local invocation returns a 500 with `HostedSessionIsolationKeyProvider returned null`** — the
+  Foundry hosting layer resolves per-request session identity from the platform-injected
+  `x-agent-user-id` header, which is only present when the platform hosts the container. `Program.cs`
+  registers `LocalDevHostedSessionIsolationKeyProvider` (see `utils/`) as a fallback so `dotnet run`,
+  `azd ai agent run`, `azd ai agent invoke --local`, and plain `curl` against
+  `http://localhost:8088/responses` all work without that header; the real platform header is still
+  honored when present, so hosted/production behavior is unaffected.
+
 ## Guidance
 
 This sample is intended as a starting point, not a production-ready browser automation platform. Before using it in production, review authentication, network access, data handling, secret management, logging, browser permissions, and approval flows for state-changing actions.
