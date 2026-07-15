@@ -25,7 +25,7 @@ public class BrowserSession
     /// <summary>Attach to a remote browser via CDP URL.</summary>
     public async Task<(bool Success, string Output)> ConnectAsync(string cdpUrl)
     {
-        var result = await RunCommandAsync($"attach --cdp={cdpUrl}");
+        var result = await RunCommandAsync(["attach", $"--cdp={cdpUrl}"]);
         Connected = result.Success;
         return result;
     }
@@ -36,38 +36,40 @@ public class BrowserSession
         if (!Connected)
             return (false, "Browser not connected. Session may need to be recreated.");
 
-        var fullCmd = command;
-        if (args.Length > 0)
-        {
-            var quoted = args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a);
-            fullCmd += " " + string.Join(" ", quoted);
-        }
-        return await RunCommandAsync(fullCmd);
+        return await RunCommandAsync([command, .. args]);
     }
 
     /// <summary>Detach from the browser session.</summary>
     public async Task CloseAsync()
     {
         if (Connected)
-            await RunCommandAsync("detach");
+            await RunCommandAsync(["detach"]);
         Connected = false;
     }
 
-    private async Task<(bool Success, string Output)> RunCommandAsync(string command)
+    private async Task<(bool Success, string Output)> RunCommandAsync(IReadOnlyList<string> command)
     {
-        var cli = FindCli();
-        var processArgs = $"-s={SessionId} {command}";
-        _logger?.LogInformation("[pw-cli] {Cli} -s={SessionId} {Command}", cli, SessionId, Redaction.Redact(command));
+        var (executable, script) = FindCli();
+        var commandText = string.Join(" ", command);
+        _logger?.LogInformation(
+            "[pw-cli] {Cli} -s={SessionId} {Command}",
+            script ?? executable,
+            SessionId,
+            Redaction.Redact(commandText));
 
         ProcessStartInfo psi = new()
         {
-            FileName = cli,
-            Arguments = processArgs,
+            FileName = executable,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        if (script != null)
+            psi.ArgumentList.Add(script);
+        psi.ArgumentList.Add($"-s={SessionId}");
+        foreach (var argument in command)
+            psi.ArgumentList.Add(argument);
 
         try
         {
@@ -105,17 +107,34 @@ public class BrowserSession
         }
     }
 
-    private static string FindCli()
+    private static (string Executable, string? Script) FindCli()
     {
         var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
         foreach (var dir in pathDirs)
         {
-            var candidate = Path.Combine(dir, "playwright-cli");
-            if (File.Exists(candidate)) return candidate;
-            if (File.Exists(candidate + ".exe")) return candidate + ".exe";
-            if (File.Exists(candidate + ".cmd")) return candidate + ".cmd";
+            var executable = Path.Combine(dir, "playwright-cli.exe");
+            if (File.Exists(executable))
+                return (executable, null);
+
+            if (OperatingSystem.IsWindows())
+            {
+                var commandShim = Path.Combine(dir, "playwright-cli.cmd");
+                var script = Path.Combine(dir, "node_modules", "@playwright", "cli", "playwright-cli.js");
+                if (File.Exists(commandShim) && File.Exists(script))
+                {
+                    var bundledNode = Path.Combine(dir, "node.exe");
+                    return (File.Exists(bundledNode) ? bundledNode : "node", script);
+                }
+            }
+            else
+            {
+                var candidate = Path.Combine(dir, "playwright-cli");
+                if (File.Exists(candidate))
+                    return (candidate, null);
+            }
         }
-        return "playwright-cli";
+
+        return (OperatingSystem.IsWindows() ? "playwright-cli.exe" : "playwright-cli", null);
     }
 
     private static string Truncate(string text, int maxLen = 12000) =>
