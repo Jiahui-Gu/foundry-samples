@@ -1,7 +1,8 @@
 # toolbox.yaml
-# Defines the toolbox this agent consumes. It exposes the Foundry IQ knowledge
-# base's MCP endpoint as a single tool (knowledge_base_retrieve), reached through
-# the `knowledge-base-mcp` connection.
+# Defines the hosted-agent toolbox. It exposes the Foundry IQ knowledge base's
+# MCP endpoint as a single tool (knowledge_base_retrieve), reached through the
+# Agentic Identity `knowledge-base-mcp` connection. Local execution uses
+# toolbox.local.yaml instead.
 #
 # Create the connection (once) from the KB MCP endpoint printed by provision_kb.py:
 #   azd ai connection create knowledge-base-mcp --kind remote-tool \

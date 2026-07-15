@@ -45,8 +45,10 @@ services:
     environmentVariables:
       - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
         value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      # Local runs keep TOOLBOX_ENDPOINT from the azd environment. Hosted
+      # deployments resolve this value to the Agentic Identity toolbox.
       - name: TOOLBOX_ENDPOINT
-        value: ${TOOLBOX_ENDPOINT}
+        value: ${TOOLBOX_DEPLOYMENT_ENDPOINT}
     container:
       resources:
         cpu: '0.5'
