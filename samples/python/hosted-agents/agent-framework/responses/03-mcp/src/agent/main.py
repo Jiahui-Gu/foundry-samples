@@ -22,7 +22,7 @@ def main():
         credential=DefaultAzureCredential(),
     )
 
-    github_pat = os.environ["GITHUB_PAT"]
+    github_pat = os.getenv("GITHUB_PAT")
     tools = []
     if not github_pat:
         logger.warning(

@@ -4,7 +4,7 @@ An [Agent Framework](https://github.com/microsoft/agent-framework) agent that co
 
 ## How it works
 
-The agent uses `FoundryChatClient` from the Agent Framework and is served via `ResponsesHostServer`. It registers a remote MCP tool pointing at `https://api.githubcopilot.com/mcp/`, authenticating with a GitHub PAT. When the model decides to call a tool, the framework forwards the call to the MCP server and returns the result to the model for the final reply. See [main.py](src/agent-framework-agent-with-remote-mcp-tools-responses/main.py) for the implementation.
+The agent uses `FoundryChatClient` from the Agent Framework and is served via `ResponsesHostServer`. It registers a remote MCP tool pointing at `https://api.githubcopilot.com/mcp/`, authenticating with a GitHub PAT. When the model decides to call a tool, the framework forwards the call to the MCP server and returns the result to the model for the final reply. See [main.py](src/agent/main.py) for the implementation.
 
 ## Option 1: Azure Developer CLI (`azd`)
 
