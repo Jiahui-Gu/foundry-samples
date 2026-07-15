@@ -71,10 +71,11 @@ The agent host will start on `http://localhost:8088`.
 
 ### Invoke the local agent
 
-In a separate terminal, invoke the running agent:
+In a separate terminal, invoke the running agent with a stable local user
+identity. Reuse the same identity to keep conversations isolated for that user:
 
 ```bash
-azd ai agent invoke --local "Hello! What can you help me with?"
+azd ai agent invoke --local --user-identity local-user "Hello! What can you help me with?"
 ```
 
 Or use curl directly:
@@ -82,6 +83,7 @@ Or use curl directly:
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "Hello! What can you help me with?", "stream": false}' | jq .
 ```
 
