@@ -364,6 +364,15 @@ internal sealed partial class SensitiveValueSanitizer
         {
             foreach ((string name, JsonNode? child) in obj.ToList())
             {
+                if (IsContinuationTokenProperty(propertyName)
+                    && name.Equals("value", StringComparison.Ordinal)
+                    && child is JsonValue continuationValue
+                    && continuationValue.TryGetValue<string>(out string? tokenValue))
+                {
+                    obj[name] = JsonValue.Create(GetAlias("continuation-token", tokenValue));
+                    continue;
+                }
+
                 if (IsForbiddenProperty(name, child))
                 {
                     obj.Remove(name);
@@ -417,7 +426,12 @@ internal sealed partial class SensitiveValueSanitizer
             sanitized = sanitized.Replace(registeredValue, GetAlias("sensitive", registeredValue), StringComparison.Ordinal);
         }
 
-        sanitized = BearerTokenRegex().Replace(sanitized, "Bearer [REDACTED]");
+        if (IsContinuationTokenProperty(propertyName))
+        {
+            return GetAlias("continuation-token", sanitized);
+        }
+
+        sanitized = BearerTokenRegex().Replace(sanitized, "******");
         sanitized = JwtRegex().Replace(sanitized, "[REDACTED]");
         sanitized = ApiKeyRegex().Replace(sanitized, "[REDACTED]");
         sanitized = CredentialAssignmentRegex().Replace(sanitized, "${name}=[REDACTED]");
@@ -462,7 +476,7 @@ internal sealed partial class SensitiveValueSanitizer
 
     private static bool IsForbiddenProperty(string name, JsonNode? value)
     {
-        string normalized = string.Concat(name.Where(char.IsLetterOrDigit)).ToLowerInvariant();
+        string normalized = NormalizePropertyName(name);
         if (normalized == "rawrepresentationtype")
         {
             return value is not null
@@ -479,14 +493,30 @@ internal sealed partial class SensitiveValueSanitizer
         }
 
         return value is JsonObject or JsonArray
-            && (normalized.Contains("credential", StringComparison.Ordinal)
-                || normalized.Contains("token", StringComparison.Ordinal)
+            && (IsCredentialBearingProperty(normalized)
                 || normalized.Contains("transport", StringComparison.Ordinal));
     }
 
     private static bool IsSensitiveValueProperty(string name)
     {
-        string normalized = string.Concat(name.Where(char.IsLetterOrDigit)).ToLowerInvariant();
+        string normalized = NormalizePropertyName(name);
+        return IsCredentialBearingProperty(normalized);
+    }
+
+    private static string NormalizePropertyName(string name)
+        => string.Concat(name.Where(char.IsLetterOrDigit)).ToLowerInvariant();
+
+    private static bool IsContinuationTokenProperty(string? propertyName)
+        => propertyName is not null
+            && NormalizePropertyName(propertyName) == "continuationtoken";
+
+    private static bool IsCredentialBearingProperty(string normalized)
+    {
+        if (normalized == "continuationtoken")
+        {
+            return false;
+        }
+
         return normalized is "authorization"
             or "authorizationheader"
             or "accesskey"
@@ -494,24 +524,40 @@ internal sealed partial class SensitiveValueSanitizer
             or "password"
             or "credential"
             or "credentials"
+            or "credentialstate"
             or "connectionstring"
             or "clientassertion"
             or "privatekey"
             or "accountkey"
             or "sharedaccesskey"
+            or "sharedaccesssignature"
             or "sastoken"
+            or "token"
+            or "authtoken"
+            or "bearertoken"
+            or "clientsecret"
+            or "secret"
+            || normalized.EndsWith("authorization", StringComparison.Ordinal)
+            || normalized.EndsWith("authorizationheader", StringComparison.Ordinal)
             || normalized.EndsWith("accesstoken", StringComparison.Ordinal)
             || normalized.EndsWith("refreshtoken", StringComparison.Ordinal)
             || normalized.EndsWith("idtoken", StringComparison.Ordinal)
-            || normalized.EndsWith("token", StringComparison.Ordinal)
-            || normalized.EndsWith("continuationtoken", StringComparison.Ordinal)
+            || normalized.EndsWith("authtoken", StringComparison.Ordinal)
+            || normalized.EndsWith("bearertoken", StringComparison.Ordinal)
             || normalized.EndsWith("apikey", StringComparison.Ordinal)
+            || normalized.EndsWith("accesskey", StringComparison.Ordinal)
             || normalized.EndsWith("clientsecret", StringComparison.Ordinal)
             || normalized.EndsWith("credential", StringComparison.Ordinal)
             || normalized.EndsWith("credentials", StringComparison.Ordinal)
+            || normalized.EndsWith("credentialstate", StringComparison.Ordinal)
             || normalized.EndsWith("connectionstring", StringComparison.Ordinal)
             || normalized.EndsWith("password", StringComparison.Ordinal)
-            || normalized.Contains("secret", StringComparison.Ordinal);
+            || normalized.EndsWith("privatekey", StringComparison.Ordinal)
+            || normalized.EndsWith("accountkey", StringComparison.Ordinal)
+            || normalized.EndsWith("sharedaccesskey", StringComparison.Ordinal)
+            || normalized.EndsWith("sharedaccesssignature", StringComparison.Ordinal)
+            || normalized.EndsWith("clientassertion", StringComparison.Ordinal)
+            || normalized.EndsWith("secret", StringComparison.Ordinal);
     }
 
     private static bool IsGuidIdentifierProperty(string? propertyName)

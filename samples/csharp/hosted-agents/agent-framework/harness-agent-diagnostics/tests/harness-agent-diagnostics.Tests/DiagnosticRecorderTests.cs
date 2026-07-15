@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using HarnessAgentDiagnostics;
@@ -368,7 +369,7 @@ public sealed class DiagnosticRecorderTests
                     connectionString = "Endpoint=https://example.test;AccountKey=plain-account-key",
                     nested = new Dictionary<string, object?>
                     {
-                        ["authorization"] = "plain-authorization",
+                        ["authorization"] = "plain-auth-token",
                         ["password"] = "plain-password",
                     },
                     unlabelledKey = credentialLookingValue,
@@ -421,6 +422,71 @@ public sealed class DiagnosticRecorderTests
             string output = await File.ReadAllTextAsync(Path.Combine(outputDirectory, "agent-response-updates.jsonl"));
             Assert.Contains("visible", output, StringComparison.Ordinal);
             Assert.DoesNotContain("protected-secret", output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordAgentResponseUpdateAsync_PersistsSanitizedContinuationTokenAndUsageTokenCounts()
+    {
+        string outputDirectory = CreateOutputDirectory();
+        ResponseContinuationToken continuationToken = ResponseContinuationToken.FromBytes("opaque-continuation-token-value"u8.ToArray());
+        UsageDetails usageDetails = new();
+        IReadOnlyDictionary<string, long> expectedTokenCounts = SetUsageTokenCounts(usageDetails);
+        string rawContinuationToken = Convert.ToBase64String(continuationToken.ToBytes().ToArray());
+
+        try
+        {
+            AgentResponseUpdate update = new(
+                ChatRole.Assistant,
+                [new UsageContent(usageDetails), new TextContent("visible text")])
+            {
+                ContinuationToken = continuationToken,
+                AdditionalProperties = new AdditionalPropertiesDictionary(new Dictionary<string, object?>
+                {
+                    ["accessToken"] = "plain-access-token",
+                    ["refreshToken"] = "plain-refresh-token",
+                    ["authorization"] = "plain-auth-token",
+                    ["note"] = "safe note",
+                }),
+            };
+
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordAgentResponseUpdateAsync(update);
+            }
+
+            using JsonDocument document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(outputDirectory, "agent-response-updates.jsonl")));
+            JsonElement root = document.RootElement;
+            JsonElement continuation = root.GetProperty("continuationToken");
+
+            Assert.Equal(typeof(ResponseContinuationToken).FullName, continuation.GetProperty("type").GetString());
+            Assert.Equal(continuationToken.ToBytes().Length, continuation.GetProperty("byteLength").GetInt32());
+            string continuationAlias = continuation.GetProperty("value").GetString()!;
+            Assert.StartsWith("continuation-token-", continuationAlias, StringComparison.Ordinal);
+            Assert.DoesNotContain(rawContinuationToken, root.GetRawText(), StringComparison.Ordinal);
+
+            JsonElement usage = root.GetProperty("contents")
+                .EnumerateArray()
+                .Single(content => content.GetProperty("type").GetString() == nameof(UsageContent));
+            JsonElement usageDetailsElement = usage.GetProperty("details");
+            foreach ((string name, long expectedValue) in expectedTokenCounts)
+            {
+                Assert.True(
+                    usageDetailsElement.TryGetProperty(name, out JsonElement property),
+                    $"Expected usage detail '{name}' to be persisted.");
+                Assert.Equal(expectedValue, property.GetInt64());
+            }
+
+            JsonElement additionalProperties = root.GetProperty("additionalProperties");
+            Assert.Equal("[REDACTED]", additionalProperties.GetProperty("accessToken").GetString());
+            Assert.Equal("[REDACTED]", additionalProperties.GetProperty("refreshToken").GetString());
+            Assert.False(additionalProperties.TryGetProperty("authorization", out _));
+            Assert.Equal("safe note", additionalProperties.GetProperty("note").GetString());
         }
         finally
         {
@@ -561,6 +627,36 @@ public sealed class DiagnosticRecorderTests
         JsonElement root = document.RootElement;
         return root.GetProperty(root.TryGetProperty("kind", out _) ? "kind" : "Kind").GetString();
     }
+
+    private static IReadOnlyDictionary<string, long> SetUsageTokenCounts(UsageDetails details)
+    {
+        Dictionary<string, long> expected = new(StringComparer.Ordinal);
+        long next = 1;
+        foreach (PropertyInfo property in typeof(UsageDetails).GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                     .Where(property => property.CanWrite && property.Name.EndsWith("TokenCount", StringComparison.Ordinal)))
+        {
+            object value = property.PropertyType switch
+            {
+                _ when property.PropertyType == typeof(int) => checked((int)next),
+                _ when property.PropertyType == typeof(long) => next,
+                _ when property.PropertyType == typeof(int?) => checked((int)next),
+                _ when property.PropertyType == typeof(long?) => next,
+                _ => throw new NotSupportedException($"Unsupported usage token count type {property.PropertyType.FullName}."),
+            };
+
+            property.SetValue(details, value);
+            expected.Add(ToCamelCase(property.Name), next);
+            next++;
+        }
+
+        Assert.NotEmpty(expected);
+        return expected;
+    }
+
+    private static string ToCamelCase(string value)
+        => string.IsNullOrEmpty(value)
+            ? value
+            : char.ToLowerInvariant(value[0]) + value[1..];
 
     private sealed class OpaqueCredential(string secret)
     {

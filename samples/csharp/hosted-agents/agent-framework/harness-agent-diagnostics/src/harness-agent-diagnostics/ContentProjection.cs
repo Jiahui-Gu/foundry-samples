@@ -209,6 +209,7 @@ public static class ContentProjection
             {
                 ["type"] = token.GetType().FullName,
                 ["byteLength"] = token.ToBytes().Length,
+                ["value"] = Convert.ToBase64String(token.ToBytes().ToArray()),
             };
 
     private static JsonObject ProjectAdditionalProperties(IEnumerable<KeyValuePair<string, object?>>? additionalProperties)
