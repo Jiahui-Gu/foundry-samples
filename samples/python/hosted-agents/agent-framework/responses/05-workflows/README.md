@@ -4,8 +4,6 @@ An [Agent Framework](https://github.com/microsoft/agent-framework) workflow demo
 
 > This sample requires a more advanced model because the model needs to continue the conversation from an assistant message. Not all models perform well in this scenario. Tested with OpenAI's model `gpt-5.4`.
 
-> This sample requires a more advanced model because the model needs to continue the conversation from an assistant message. Not all models perform well in this scenario. Tested with OpenAI's model `gpt-5.4`.
-
 ## How it works
 
 The agent creates three specialized `Agent` instances sharing the same `FoundryChatClient`: a **writer** that generates slogans, a **legal reviewer** that ensures compliance, and a **formatter** that styles the output. Each agent is wrapped in an `AgentExecutor` with `context_mode="last_agent"` so it only sees the previous agent's output. The `WorkflowBuilder` wires them into a linear pipeline and limits the output to the formatter's result. The workflow is converted to a standard agent via `.as_agent()` and served via `ResponsesHostServer`. See [main.py](src/agent-framework-workflows-responses/main.py) for the implementation.
@@ -52,12 +50,25 @@ azd ai agent run
 
 The agent host will start on `http://localhost:8088`.
 
+For a headless terminal, or if port `8088` is already in use, choose a free
+port and disable the browser client:
+
+```bash
+azd ai agent run --no-client --port 8188
+```
+
 ### Invoke the local agent
 
 In a separate terminal, from the project directory:
 
 ```bash
 azd ai agent invoke --local "Create a slogan for a new electric SUV that is affordable and fun to drive."
+```
+
+When using a custom port, pass the same port to the invoke command:
+
+```bash
+azd ai agent invoke --local --port 8188 "Create a slogan for a new electric SUV that is affordable and fun to drive."
 ```
 
 ### Deploy to Foundry
