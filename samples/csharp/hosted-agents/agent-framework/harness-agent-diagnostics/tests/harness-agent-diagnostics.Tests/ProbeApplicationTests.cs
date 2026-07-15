@@ -169,7 +169,7 @@ public sealed class ProbeApplicationTests
                 Done: false,
                 Completed: false,
                 ImmutableArray.Create("malformed-json"),
-                ImmutableArray.Create("missing-response-completed", "missing-done"))));
+                ImmutableArray.Create("missing-response-completed"))));
 
         Assert.NotEqual(0, exitCode);
         Assert.Empty(output.ToString());

@@ -32,7 +32,7 @@ public sealed class WireCaptureTests
                 "event: response.output_text.delta\r\n" +
                 "retry: 1500\r\n" +
                 "data: {\"type\":\"response.output_text.delta\",\"id\":\"resp_123456789\",\"delta\":\"line one\",\r\n" +
-                $"data: \"resource\":\"{ResourceId}\",\"secret\":\"{Secret}\"}}\r\n\r\n" +
+                $"data: \"resource\":\"{ResourceId}\",\"apiKey\":\"{Secret}\"}}\r\n\r\n" +
                 "event: response.completed\n" +
                 "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_987654321\"}}\n\n" +
                 "data: [DONE]\n\n";
@@ -153,6 +153,7 @@ public sealed class WireCaptureTests
             Assert.DoesNotContain(Secret, exception.Message, StringComparison.Ordinal);
             Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.SseFileName)));
             Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.EventsFileName)));
+            AssertNoTemporaryFiles(outputDirectory);
         }
         finally
         {
@@ -161,13 +162,193 @@ public sealed class WireCaptureTests
     }
 
     [Fact]
-    public async Task CaptureAsync_FinalizesMalformedJsonAsFailedSanitizedEvidence()
+    public async Task CaptureAsync_StructurallySanitizesValidJsonErrorBodyOnStderr()
+    {
+        await using LoopbackServer server = await LoopbackServer.StartAsync(async context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            context.Response.ContentType = "application/json";
+            string body = $"{{\"error\":{{\"apiKey\":\"{Secret}\",\"password\":\"{Secret}\"}}}}";
+            foreach (string fragment in Fragment(body, 1, 3, 2))
+            {
+                await context.Response.WriteAsync(fragment);
+                await context.Response.Body.FlushAsync();
+            }
+        });
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            (int exitCode, string stderr) = await CaptureThroughApplicationAsync(
+                server.BaseUrl,
+                outputDirectory);
+
+            Assert.NotEqual(0, exitCode);
+            Assert.Contains("\"apiKey\":\"[REDACTED]\"", stderr, StringComparison.Ordinal);
+            Assert.Contains("\"password\":\"[REDACTED]\"", stderr, StringComparison.Ordinal);
+            Assert.DoesNotContain(Secret, stderr, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.SseFileName)));
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.EventsFileName)));
+            AssertNoTemporaryFiles(outputDirectory);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task CaptureAsync_UsesOnlySafeMarkerForMalformedJsonErrorBodyOnStderr()
+    {
+        await using LoopbackServer server = await LoopbackServer.StartAsync(async context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status502BadGateway;
+            context.Response.ContentType = "application/json";
+            string body = $"{{\"apiKey\":\"{Secret}\"";
+            foreach (string fragment in Fragment(body, 2, 1, 4))
+            {
+                await context.Response.WriteAsync(fragment);
+                await context.Response.Body.FlushAsync();
+            }
+        });
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            (int exitCode, string stderr) = await CaptureThroughApplicationAsync(
+                server.BaseUrl,
+                outputDirectory);
+
+            Assert.NotEqual(0, exitCode);
+            Assert.Contains("\"bodyType\":\"unparseable-json\"", stderr, StringComparison.Ordinal);
+            Assert.Contains("\"redacted\":true", stderr, StringComparison.Ordinal);
+            Assert.Contains("\"length\":", stderr, StringComparison.Ordinal);
+            Assert.DoesNotContain("apiKey", stderr, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(Secret, stderr, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.SseFileName)));
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.EventsFileName)));
+            AssertNoTemporaryFiles(outputDirectory);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public void CreateHttpHandler_DisablesAmbientProxyAndCredentialBehavior()
+    {
+        using SocketsHttpHandler handler = WireCapture.CreateHttpHandler();
+
+        Assert.False(handler.UseProxy);
+        Assert.False(handler.AllowAutoRedirect);
+        Assert.False(handler.UseCookies);
+        Assert.False(handler.PreAuthenticate);
+        Assert.Null(handler.Credentials);
+        Assert.Null(handler.DefaultProxyCredentials);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_AppliesEventSourceFramingAndPreservesEverySanitizedFieldLine()
     {
         await using LoopbackServer server = await LoopbackServer.StartAsync(async context =>
         {
             context.Response.ContentType = "text/event-stream";
-            await context.Response.WriteAsync(
-                $"event: response.delta\ndata: {{\"type\":\"response.delta\",\"message\":\"clientSecret={Secret}\"\n\n");
+            string stream =
+                ": state-only comment\n" +
+                "id: persisted-id\n" +
+                "retry: 2500\n\n" +
+                "event: ignored-event\n\n" +
+                "event: overwritten-event\n" +
+                "event:\n" +
+                $"id: ignored\0apiKey={Secret}\n" +
+                "retry: -1\n" +
+                "retry: invalid\n" +
+                "retry: 0007\n" +
+                ": first event comment\n" +
+                ": second event comment\n" +
+                "data: {\"type\":\"response.output_text.delta\",\n" +
+                "data: \"delta\":\"line one\"}\n\n" +
+                "event: ignored-completion-name\n" +
+                "event: response.completed\n" +
+                "data: {\"type\":\"response.completed\"}\n\n" +
+                "data: [DONE]\n\n";
+            foreach (string fragment in Fragment(stream, 1, 2, 5, 3))
+            {
+                await context.Response.WriteAsync(fragment);
+                await context.Response.Body.FlushAsync();
+            }
+        });
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            WireCaptureSummary summary = await WireCapture.CaptureAsync(
+                server.BaseUrl,
+                outputDirectory);
+
+            Assert.Equal(3, summary.EventCount);
+            Assert.Equal(["message", "response.completed", "message"], summary.EventNames.ToArray());
+            Assert.True(summary.Completed);
+            Assert.True(summary.Done);
+            Assert.Empty(summary.FailureMarkers);
+            Assert.Empty(summary.MissingMarkers);
+
+            string sse = await File.ReadAllTextAsync(
+                Path.Combine(outputDirectory, WireCapture.SseFileName));
+            string[] jsonLines = await File.ReadAllLinesAsync(
+                Path.Combine(outputDirectory, WireCapture.EventsFileName));
+            Assert.Equal(3, jsonLines.Length);
+            using JsonDocument firstEvent = JsonDocument.Parse(jsonLines[0]);
+            Assert.Equal("persisted-id", firstEvent.RootElement.GetProperty("id").GetString());
+            Assert.Equal("0007", firstEvent.RootElement.GetProperty("retry").GetString());
+            Assert.Equal("message", firstEvent.RootElement.GetProperty("event").GetString());
+            Assert.Equal(
+                "line one",
+                firstEvent.RootElement.GetProperty("data").GetProperty("delta").GetString());
+            Assert.Equal(
+                ["first event comment", "second event comment"],
+                firstEvent.RootElement.GetProperty("comments")
+                    .EnumerateArray()
+                    .Select(item => item.GetString()!)
+                    .ToArray());
+
+            Assert.Equal(1, CountOccurrences(sse, "event: ignored-event"));
+            Assert.Equal(1, CountOccurrences(sse, "event: overwritten-event"));
+            Assert.Equal(
+                1,
+                sse.Split(["\r\n", "\n"], StringSplitOptions.None)
+                    .Count(line => line == "event: "));
+            Assert.Equal(1, CountOccurrences(sse, "event: ignored-completion-name"));
+            Assert.Equal(1, CountOccurrences(sse, "event: response.completed"));
+            Assert.Contains("id: [IGNORED_NUL_ID]", sse, StringComparison.Ordinal);
+            Assert.Contains("retry: -1", sse, StringComparison.Ordinal);
+            Assert.Contains("retry: invalid", sse, StringComparison.Ordinal);
+            Assert.Contains(": state-only comment", sse, StringComparison.Ordinal);
+            Assert.Contains(": first event comment", sse, StringComparison.Ordinal);
+            Assert.Contains(": second event comment", sse, StringComparison.Ordinal);
+            Assert.DoesNotContain(Secret, sse, StringComparison.Ordinal);
+            AssertNoTemporaryFiles(outputDirectory);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task CaptureAsync_FinalizesMalformedJsonOnlyAsFailedSafeMarkerEvidence()
+    {
+        await using LoopbackServer server = await LoopbackServer.StartAsync(async context =>
+        {
+            context.Response.ContentType = "text/event-stream";
+            string stream =
+                $"event: response.delta\ndata: {{\"type\":\"response.delta\",\"apiKey\":\"{Secret}\"\n\n";
+            foreach (string fragment in Fragment(stream, 1, 4, 2))
+            {
+                await context.Response.WriteAsync(fragment);
+                await context.Response.Body.FlushAsync();
+            }
         });
         string outputDirectory = CreateOutputDirectory();
 
@@ -177,9 +358,17 @@ public sealed class WireCaptureTests
 
             Assert.Equal(["malformed-json"], summary.FailureMarkers.ToArray());
             Assert.False(summary.Completed);
-            string evidence = await ReadEvidenceAsync(outputDirectory);
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.SseFileName)));
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.EventsFileName)));
+            string evidence = await ReadFailedEvidenceAsync(outputDirectory);
             Assert.Contains("\"failure\":\"malformed-json\"", evidence, StringComparison.Ordinal);
+            Assert.Contains("\"dataType\":\"unparseable-data\"", evidence, StringComparison.Ordinal);
+            Assert.Contains("\"redacted\":true", evidence, StringComparison.Ordinal);
+            Assert.Contains("\"length\":", evidence, StringComparison.Ordinal);
+            Assert.Contains("\"recordType\":\"failure-summary\"", evidence, StringComparison.Ordinal);
+            Assert.DoesNotContain("apiKey", evidence, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(Secret, evidence, StringComparison.Ordinal);
+            AssertNoTemporaryFiles(outputDirectory);
         }
         finally
         {
@@ -205,8 +394,14 @@ public sealed class WireCaptureTests
             Assert.False(summary.Completed);
             Assert.False(summary.Done);
             Assert.Equal(
-                ["missing-response-completed", "missing-done"],
+                ["missing-response-completed"],
                 summary.MissingMarkers.ToArray());
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.SseFileName)));
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.EventsFileName)));
+            string evidence = await ReadFailedEvidenceAsync(outputDirectory);
+            Assert.Contains("missing-response-completed", evidence, StringComparison.Ordinal);
+            Assert.Contains("\"recordType\":\"failure-summary\"", evidence, StringComparison.Ordinal);
+            AssertNoTemporaryFiles(outputDirectory);
         }
         finally
         {
@@ -226,6 +421,7 @@ public sealed class WireCaptureTests
             await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted);
         });
         string outputDirectory = CreateOutputDirectory();
+        await SeedStaleSuccessFilesAsync(outputDirectory);
         using CancellationTokenSource cancellation = new(TimeSpan.FromMilliseconds(250));
 
         try
@@ -235,6 +431,9 @@ public sealed class WireCaptureTests
 
             Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.SseFileName)));
             Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.EventsFileName)));
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.FailedSseFileName)));
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.FailedEventsFileName)));
+            AssertNoTemporaryFiles(outputDirectory);
         }
         finally
         {
@@ -255,6 +454,7 @@ public sealed class WireCaptureTests
             context.Abort();
         });
         string outputDirectory = CreateOutputDirectory();
+        await SeedStaleSuccessFilesAsync(outputDirectory);
 
         try
         {
@@ -264,11 +464,118 @@ public sealed class WireCaptureTests
             Assert.Contains("stream-failure", exception.Markers);
             Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.SseFileName)));
             Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.EventsFileName)));
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.FailedSseFileName)));
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.FailedEventsFileName)));
+            AssertNoTemporaryFiles(outputDirectory);
         }
         finally
         {
             DeleteOutputDirectory(outputDirectory);
         }
+    }
+
+    [Fact]
+    public async Task CaptureAsync_AtomicallyReplacesStaleSuccessFilesAfterValidatedCompletionWithoutDone()
+    {
+        await using LoopbackServer server = await LoopbackServer.StartAsync(async context =>
+        {
+            context.Response.ContentType = "text/event-stream";
+            string stream =
+                "event: response.completed\n" +
+                "data: {\"type\":\"response.completed\"}\n\n";
+            foreach (string fragment in Fragment(stream, 2, 1, 5))
+            {
+                await context.Response.WriteAsync(fragment);
+                await context.Response.Body.FlushAsync();
+            }
+        });
+        string outputDirectory = CreateOutputDirectory();
+        await SeedStaleSuccessFilesAsync(outputDirectory);
+
+        try
+        {
+            WireCaptureSummary summary = await WireCapture.CaptureAsync(
+                server.BaseUrl,
+                outputDirectory);
+
+            Assert.True(summary.Completed);
+            Assert.False(summary.Done);
+            Assert.Empty(summary.FailureMarkers);
+            Assert.Empty(summary.MissingMarkers);
+            string evidence = await ReadEvidenceAsync(outputDirectory);
+            Assert.DoesNotContain("stale-success", evidence, StringComparison.Ordinal);
+            Assert.Contains("response.completed", evidence, StringComparison.Ordinal);
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.FailedSseFileName)));
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.FailedEventsFileName)));
+            AssertNoTemporaryFiles(outputDirectory);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidTerminalStreams))]
+    public async Task CaptureAsync_RejectsInvalidTerminalOrdering(
+        string stream,
+        string expectedMarker)
+    {
+        await using LoopbackServer server = await LoopbackServer.StartAsync(async context =>
+        {
+            context.Response.ContentType = "text/event-stream";
+            foreach (string fragment in Fragment(stream, 1, 3, 2, 5))
+            {
+                await context.Response.WriteAsync(fragment);
+                await context.Response.Body.FlushAsync();
+            }
+        });
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            WireCaptureSummary summary = await WireCapture.CaptureAsync(
+                server.BaseUrl,
+                outputDirectory);
+
+            Assert.Contains(expectedMarker, summary.FailureMarkers);
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.SseFileName)));
+            Assert.False(File.Exists(Path.Combine(outputDirectory, WireCapture.EventsFileName)));
+            string evidence = await ReadFailedEvidenceAsync(outputDirectory);
+            Assert.Contains(expectedMarker, evidence, StringComparison.Ordinal);
+            Assert.Contains("\"recordType\":\"failure-summary\"", evidence, StringComparison.Ordinal);
+            AssertNoTemporaryFiles(outputDirectory);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    public static IEnumerable<object[]> InvalidTerminalStreams()
+    {
+        yield return
+        [
+            "event: response.completed\n" +
+            "data: {\"type\":\"response.completed\"}\n\n" +
+            "data: {\"type\":\"response.output_text.delta\"}\n\n",
+            "data-after-response-completed",
+        ];
+        yield return
+        [
+            "data: [DONE]\n\n" +
+            "event: response.completed\n" +
+            "data: {\"type\":\"response.completed\"}\n\n",
+            "done-before-response-completed",
+        ];
+        yield return
+        [
+            "event: response.completed\n" +
+            "data: {\"type\":\"response.completed\"}\n\n" +
+            "data: [DONE]\n\n" +
+            ": forbidden after done\n\n",
+            "content-after-done",
+        ];
     }
 
     private static async Task<RequestSnapshot> SnapshotAsync(HttpRequest request)
@@ -316,6 +623,56 @@ public sealed class WireCaptureTests
     private static async Task<string> ReadEvidenceAsync(string outputDirectory)
         => await File.ReadAllTextAsync(Path.Combine(outputDirectory, WireCapture.SseFileName))
             + await File.ReadAllTextAsync(Path.Combine(outputDirectory, WireCapture.EventsFileName));
+
+    private static async Task<string> ReadFailedEvidenceAsync(string outputDirectory)
+        => await File.ReadAllTextAsync(Path.Combine(outputDirectory, WireCapture.FailedSseFileName))
+            + await File.ReadAllTextAsync(Path.Combine(outputDirectory, WireCapture.FailedEventsFileName));
+
+    private static async Task SeedStaleSuccessFilesAsync(string outputDirectory)
+    {
+        await File.WriteAllTextAsync(
+            Path.Combine(outputDirectory, WireCapture.SseFileName),
+            "stale-success");
+        await File.WriteAllTextAsync(
+            Path.Combine(outputDirectory, WireCapture.EventsFileName),
+            "stale-success");
+    }
+
+    private static void AssertNoTemporaryFiles(string outputDirectory)
+        => Assert.DoesNotContain(
+            Directory.EnumerateFiles(outputDirectory),
+            path => Path.GetFileName(path).Contains(".tmp.", StringComparison.Ordinal));
+
+    private static int CountOccurrences(string value, string expected)
+    {
+        int count = 0;
+        int offset = 0;
+        while ((offset = value.IndexOf(expected, offset, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            offset += expected.Length;
+        }
+
+        return count;
+    }
+
+    private static async Task<(int ExitCode, string Stderr)> CaptureThroughApplicationAsync(
+        Uri url,
+        string outputDirectory)
+    {
+        StringWriter error = new();
+        int exitCode = await ProbeApplication.RunAsync(
+            ["capture-wire", "--url", url.AbsoluteUri, "--output", outputDirectory],
+            TextWriter.Null,
+            error,
+            (_, _) => throw new InvalidOperationException("probe must not run"),
+            (_, _, _) => throw new InvalidOperationException("serve must not run"),
+            (command, cancellationToken) => WireCapture.CaptureAsync(
+                command.Url,
+                command.OutputDirectory,
+                cancellationToken));
+        return (exitCode, error.ToString());
+    }
 
     private sealed record RequestSnapshot(
         string Method,

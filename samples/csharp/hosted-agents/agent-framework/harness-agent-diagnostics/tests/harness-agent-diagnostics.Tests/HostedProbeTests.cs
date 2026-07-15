@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using Azure.AI.AgentServer.Core;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -47,5 +48,27 @@ public sealed class HostedProbeTests
             await host.App.StopAsync();
             await host.App.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public async Task RunAsync_DoesNotPrintListeningWhenStartAsyncCannotBind()
+    {
+        ProbeAgentContext context = ProbeAgentFactory.Create(
+            new ThrowingChatClient(),
+            "HarnessAgentDiagnostics.Tests.Hosted.BindFailure");
+        using TcpListener occupiedPort = new(IPAddress.Loopback, 0);
+        occupiedPort.Start();
+        int port = ((IPEndPoint)occupiedPort.LocalEndpoint).Port;
+        StringWriter output = new();
+
+        Exception? exception = await Record.ExceptionAsync(
+            () => HostedProbe.RunAsync(
+                context.Agent,
+                new Uri($"http://127.0.0.1:{port}"),
+                output,
+                CancellationToken.None));
+
+        Assert.NotNull(exception);
+        Assert.Empty(output.ToString());
     }
 }

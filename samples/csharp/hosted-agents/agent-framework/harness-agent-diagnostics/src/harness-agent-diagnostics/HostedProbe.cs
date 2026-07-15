@@ -4,6 +4,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -39,15 +40,23 @@ internal static class HostedProbe
     {
         ArgumentNullException.ThrowIfNull(output);
         AgentHostApp host = Build(agent, url);
+        bool started = false;
         try
         {
+            await host.App.StartAsync(cancellationToken).ConfigureAwait(false);
+            started = true;
             await output.WriteLineAsync(
                 $"Listening locally at {url.GetLeftPart(UriPartial.Authority)}")
                 .ConfigureAwait(false);
-            await host.RunAsync(cancellationToken).ConfigureAwait(false);
+            await host.App.WaitForShutdownAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
+            if (started)
+            {
+                await host.App.StopAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+
             await host.App.DisposeAsync().ConfigureAwait(false);
         }
     }

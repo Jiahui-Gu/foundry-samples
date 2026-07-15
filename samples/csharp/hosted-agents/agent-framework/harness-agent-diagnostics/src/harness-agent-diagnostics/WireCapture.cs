@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -39,6 +40,8 @@ internal static class WireCapture
 {
     internal const string SseFileName = "hosted-responses.sse";
     internal const string EventsFileName = "hosted-responses-events.jsonl";
+    internal const string FailedSseFileName = "hosted-responses.failed.sse";
+    internal const string FailedEventsFileName = "hosted-responses-events.failed.jsonl";
     private const int FailureExcerptLimit = 4096;
     private const string DiagnosticPrompt =
         """
@@ -60,17 +63,12 @@ internal static class WireCapture
         }
 
         Uri validatedUrl = LoopbackHttpUrl.Parse(baseUrl.AbsoluteUri);
-        string ssePath = Path.Combine(outputDirectory, SseFileName);
-        string eventsPath = Path.Combine(outputDirectory, EventsFileName);
-        DeleteEvidence(ssePath, eventsPath);
+        Directory.CreateDirectory(outputDirectory);
+        EvidencePaths paths = EvidencePaths.Create(outputDirectory);
+        DeleteEvidence(paths.AllFinalPaths);
+        DeleteOwnedTemporaryFiles(outputDirectory);
 
-        using SocketsHttpHandler handler = new()
-        {
-            AllowAutoRedirect = false,
-            Credentials = null,
-            PreAuthenticate = false,
-            UseCookies = false,
-        };
+        using SocketsHttpHandler handler = CreateHttpHandler();
         using HttpClient client = new(handler)
         {
             Timeout = Timeout.InfiniteTimeSpan,
@@ -112,12 +110,12 @@ internal static class WireCapture
                     ["content-type"]);
             }
 
-            ImmutableArray<SanitizedSseEvent> events;
+            SanitizedCapture capture;
             try
             {
                 await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken)
                     .ConfigureAwait(false);
-                events = await ReadEventsAsync(stream, cancellationToken).ConfigureAwait(false);
+                capture = await ReadCaptureAsync(stream, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -132,19 +130,35 @@ internal static class WireCapture
                     exception);
             }
 
-            WireCaptureSummary summary = CreateSummary(response.StatusCode, mediaType, events);
-            await WriteEvidenceAsync(ssePath, eventsPath, events, cancellationToken)
+            WireCaptureSummary summary = CreateSummary(response.StatusCode, mediaType, capture);
+            bool succeeded = summary.FailureMarkers.IsEmpty && summary.MissingMarkers.IsEmpty;
+            await WriteEvidenceAtomicallyAsync(paths, capture, summary, succeeded, cancellationToken)
                 .ConfigureAwait(false);
             return summary;
         }
         catch
         {
-            DeleteEvidence(ssePath, eventsPath);
+            DeleteEvidence(paths.AllFinalPaths);
             throw;
+        }
+        finally
+        {
+            DeleteOwnedTemporaryFiles(outputDirectory);
         }
     }
 
-    private static async Task<ImmutableArray<SanitizedSseEvent>> ReadEventsAsync(
+    internal static SocketsHttpHandler CreateHttpHandler()
+        => new()
+        {
+            AllowAutoRedirect = false,
+            Credentials = null,
+            DefaultProxyCredentials = null,
+            PreAuthenticate = false,
+            UseCookies = false,
+            UseProxy = false,
+        };
+
+    private static async Task<SanitizedCapture> ReadCaptureAsync(
         Stream stream,
         CancellationToken cancellationToken)
     {
@@ -154,20 +168,30 @@ internal static class WireCapture
             detectEncodingFromByteOrderMarks: false,
             bufferSize: 1024,
             leaveOpen: true);
-        ImmutableArray<SanitizedSseEvent>.Builder events = ImmutableArray.CreateBuilder<SanitizedSseEvent>();
+        CaptureState state = new();
         SensitiveValueSanitizer sanitizer = new([]);
+        ImmutableArray<SanitizedSseBlock>.Builder blocks =
+            ImmutableArray.CreateBuilder<SanitizedSseBlock>();
+        ImmutableArray<SanitizedSseEvent>.Builder events =
+            ImmutableArray.CreateBuilder<SanitizedSseEvent>();
         List<SseField> fields = [];
+
         while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
         {
             if (line.Length == 0)
             {
                 if (fields.Count > 0)
                 {
-                    events.Add(SanitizeEvent(events.Count + 1, fields, sanitizer));
+                    ProcessBlock(fields, dispatchData: true, sanitizer, state, blocks, events);
                     fields.Clear();
                 }
 
                 continue;
+            }
+
+            if (state.Done)
+            {
+                AddDistinct(state.Failures, "content-after-done");
             }
 
             if (line[0] == ':')
@@ -185,155 +209,271 @@ internal static class WireCapture
             }
         }
 
-        return events.ToImmutable();
+        if (fields.Count > 0)
+        {
+            ProcessBlock(fields, dispatchData: false, sanitizer, state, blocks, events);
+        }
+
+        return new SanitizedCapture(
+            blocks.ToImmutable(),
+            events.ToImmutable(),
+            state.Completed,
+            state.Done,
+            state.Failures.ToImmutableArray());
     }
 
-    private static SanitizedSseEvent SanitizeEvent(
-        int sequence,
+    private static void ProcessBlock(
         List<SseField> fields,
+        bool dispatchData,
+        SensitiveValueSanitizer sanitizer,
+        CaptureState state,
+        ImmutableArray<SanitizedSseBlock>.Builder blocks,
+        ImmutableArray<SanitizedSseEvent>.Builder events)
+    {
+        string? eventValue = null;
+        List<string> dataLines = [];
+        ImmutableArray<string>.Builder comments = ImmutableArray.CreateBuilder<string>();
+        foreach (SseField field in fields)
+        {
+            switch (field.Name)
+            {
+                case "comment":
+                    comments.Add(SanitizeText(sanitizer, field.Value, "comment"));
+                    break;
+                case "event":
+                    eventValue = field.Value;
+                    break;
+                case "id" when !field.Value.Contains('\0'):
+                    state.LastEventId = field.Value;
+                    break;
+                case "retry" when IsValidRetry(field.Value):
+                    state.Retry = field.Value;
+                    break;
+                case "data":
+                    dataLines.Add(field.Value);
+                    break;
+            }
+        }
+
+        SanitizedData sanitizedData = SanitizeData(dataLines, sanitizer);
+        ImmutableArray<SseField>.Builder sanitizedFields =
+            ImmutableArray.CreateBuilder<SseField>(fields.Count);
+        int dataIndex = 0;
+        foreach (SseField field in fields)
+        {
+            string value = field.Name switch
+            {
+                "comment" => SanitizeText(sanitizer, field.Value, "comment"),
+                "event" => SanitizeText(sanitizer, field.Value, "event"),
+                "id" when field.Value.Contains('\0') => "[IGNORED_NUL_ID]",
+                "id" => SanitizeText(sanitizer, field.Value, "id"),
+                "retry" => SanitizeText(sanitizer, field.Value, "retry"),
+                "data" => sanitizedData.RenderedLines[dataIndex++],
+                _ => string.Empty,
+            };
+            sanitizedFields.Add(new SseField(field.Name, value));
+        }
+
+        blocks.Add(new SanitizedSseBlock(sanitizedFields.ToImmutable()));
+        if (!dispatchData || dataLines.Count == 0)
+        {
+            return;
+        }
+
+        string effectiveEventName = string.IsNullOrEmpty(eventValue) ? "message" : eventValue;
+        string sanitizedEventName = SanitizeText(sanitizer, effectiveEventName, "event");
+        SanitizedSseEvent capturedEvent = new(
+            events.Count + 1,
+            sanitizedEventName,
+            state.LastEventId is null
+                ? null
+                : SanitizeText(sanitizer, state.LastEventId, "id"),
+            state.Retry,
+            comments.ToImmutable(),
+            sanitizedData.DataType,
+            sanitizedData.Data,
+            sanitizedData.Done,
+            sanitizedData.Failure);
+        events.Add(capturedEvent);
+
+        if (sanitizedData.Failure is not null)
+        {
+            AddDistinct(state.Failures, sanitizedData.Failure);
+        }
+
+        bool isCompletion =
+            effectiveEventName.Equals("response.completed", StringComparison.Ordinal)
+            || sanitizedData.DataType?.Equals("response.completed", StringComparison.Ordinal) == true;
+        if (sanitizedData.Done)
+        {
+            if (!state.Completed)
+            {
+                AddDistinct(state.Failures, "done-before-response-completed");
+            }
+
+            state.Done = true;
+            return;
+        }
+
+        if (state.Done)
+        {
+            AddDistinct(state.Failures, "data-after-done");
+        }
+
+        if (state.Completed)
+        {
+            AddDistinct(state.Failures, "data-after-response-completed");
+        }
+
+        if (isCompletion)
+        {
+            state.Completed = true;
+        }
+    }
+
+    private static SanitizedData SanitizeData(
+        List<string> dataLines,
         SensitiveValueSanitizer sanitizer)
     {
-        List<string> dataLines = fields
-            .Where(field => field.Name == "data")
-            .Select(field => field.Value)
-            .ToList();
+        if (dataLines.Count == 0)
+        {
+            return new SanitizedData(null, null, false, null, []);
+        }
+
         string dataText = string.Join('\n', dataLines);
-        bool done = dataText == "[DONE]";
-        JsonNode? data = null;
+        if (dataText == "[DONE]")
+        {
+            return new SanitizedData(
+                JsonValue.Create("[DONE]"),
+                null,
+                true,
+                null,
+                ["[DONE]"]);
+        }
+
+        JsonNode? data;
+        string? dataType;
         string? failure = null;
-        string? dataType = null;
-        ImmutableArray<string> renderedDataLines;
-
-        if (done)
+        string rendered;
+        try
         {
-            data = JsonValue.Create("[DONE]");
-            renderedDataLines = ["[DONE]"];
+            JsonNode? parsed = JsonNode.Parse(dataText);
+            data = sanitizer.Sanitize(parsed);
+            dataType = GetStringProperty(data as JsonObject, "type");
+            rendered = data?.ToJsonString(JsonOptions) ?? "null";
         }
-        else if (dataLines.Count == 0)
+        catch (JsonException)
         {
-            renderedDataLines = [];
-        }
-        else
-        {
-            try
+            failure = "malformed-json";
+            dataType = "unparseable-data";
+            data = new JsonObject
             {
-                JsonNode? parsed = JsonNode.Parse(dataText);
-                data = sanitizer.Sanitize(parsed);
-                dataType = (data as JsonObject)?["type"]?.GetValue<string>();
-                string sanitizedJson = data?.ToJsonString(JsonOptions) ?? "null";
-                renderedDataLines =
-                [
-                    .. Enumerable
-                        .Repeat(string.Empty, dataLines.Count - 1)
-                        .Append(sanitizedJson),
-                ];
-            }
-            catch (JsonException)
-            {
-                failure = "malformed-json";
-                data = sanitizer.Sanitize(JsonValue.Create(dataText), "data");
-                renderedDataLines =
-                [
-                    .. dataLines.Select(line => SanitizeText(sanitizer, line, "data")),
-                ];
-            }
+                ["kind"] = "parse-failure",
+                ["dataType"] = dataType,
+                ["length"] = dataText.Length,
+                ["redacted"] = true,
+            };
+            rendered = data.ToJsonString(JsonOptions);
         }
 
-        string eventName = fields
-            .Where(field => field.Name == "event")
-            .Select(field => field.Value)
-            .LastOrDefault() ?? "message";
-        string? id = fields
-            .Where(field => field.Name == "id")
-            .Select(field => field.Value)
-            .LastOrDefault();
-        string? retry = fields
-            .Where(field => field.Name == "retry")
-            .Select(field => field.Value)
-            .LastOrDefault();
-        ImmutableArray<string> comments =
-        [
-            .. fields
-                .Where(field => field.Name == "comment")
-                .Select(field => SanitizeText(sanitizer, field.Value, "comment")),
-        ];
-
-        return new SanitizedSseEvent(
-            sequence,
-            SanitizeText(sanitizer, eventName, "event"),
-            id is null ? null : SanitizeText(sanitizer, id, "id"),
-            retry is null ? null : SanitizeText(sanitizer, retry, "retry"),
-            comments,
-            dataType,
+        return new SanitizedData(
             data,
-            done,
+            dataType,
+            false,
             failure,
-            [.. fields],
-            renderedDataLines);
+            DistributeRenderedData(dataLines.Count, rendered));
     }
 
     private static WireCaptureSummary CreateSummary(
         HttpStatusCode statusCode,
         string contentType,
-        ImmutableArray<SanitizedSseEvent> events)
+        SanitizedCapture capture)
     {
-        bool done = events.Any(item => item.Done);
-        bool completed = events.Any(item =>
-            item.EventName == "response.completed"
-            || item.DataType == "response.completed");
-        ImmutableArray<string> failures =
-        [
-            .. events
-                .Select(item => item.Failure)
-                .Where(item => item is not null)
-                .Cast<string>()
-                .Distinct(StringComparer.Ordinal),
-        ];
         ImmutableArray<string>.Builder missing = ImmutableArray.CreateBuilder<string>();
-        if (!completed)
+        if (!capture.Completed)
         {
             missing.Add("missing-response-completed");
-        }
-
-        if (!done)
-        {
-            missing.Add("missing-done");
         }
 
         return new WireCaptureSummary(
             statusCode,
             contentType,
-            events.Length,
-            [.. events.Select(item => item.EventName)],
-            [.. events.Select(item => item.DataType).Where(item => item is not null).Cast<string>()],
-            done,
-            completed,
-            failures,
+            capture.Events.Length,
+            [.. capture.Events.Select(item => item.EventName)],
+            [.. capture.Events.Select(item => item.DataType).Where(item => item is not null).Cast<string>()],
+            capture.Done,
+            capture.Completed,
+            capture.Failures,
             missing.ToImmutable());
     }
 
-    private static async Task WriteEvidenceAsync(
-        string ssePath,
-        string eventsPath,
-        ImmutableArray<SanitizedSseEvent> events,
+    private static async Task WriteEvidenceAtomicallyAsync(
+        EvidencePaths paths,
+        SanitizedCapture capture,
+        WireCaptureSummary summary,
+        bool succeeded,
         CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(ssePath)!);
-        StringBuilder sse = new();
-        StringBuilder jsonl = new();
-        foreach (SanitizedSseEvent item in events)
+        string suffix = Guid.NewGuid().ToString("N");
+        string temporarySsePath = Path.Combine(
+            paths.Directory,
+            $".hosted-responses.{suffix}.tmp.sse");
+        string temporaryEventsPath = Path.Combine(
+            paths.Directory,
+            $".hosted-responses-events.{suffix}.tmp.jsonl");
+        string targetSsePath = succeeded ? paths.Sse : paths.FailedSse;
+        string targetEventsPath = succeeded ? paths.Events : paths.FailedEvents;
+        (string sse, string jsonl) = RenderEvidence(capture, summary, succeeded);
+
+        try
         {
-            AppendSseEvent(sse, item);
+            await WriteAndFlushAsync(temporarySsePath, sse, cancellationToken)
+                .ConfigureAwait(false);
+            await WriteAndFlushAsync(temporaryEventsPath, jsonl, cancellationToken)
+                .ConfigureAwait(false);
+            File.Move(temporarySsePath, targetSsePath, overwrite: true);
+            try
+            {
+                File.Move(temporaryEventsPath, targetEventsPath, overwrite: true);
+            }
+            catch
+            {
+                DeleteEvidence(targetSsePath);
+                throw;
+            }
+        }
+        catch
+        {
+            DeleteEvidence(
+                temporarySsePath,
+                temporaryEventsPath,
+                targetSsePath,
+                targetEventsPath);
+            throw;
+        }
+    }
+
+    private static (string Sse, string Jsonl) RenderEvidence(
+        SanitizedCapture capture,
+        WireCaptureSummary summary,
+        bool succeeded)
+    {
+        StringBuilder sse = new();
+        foreach (SanitizedSseBlock block in capture.Blocks)
+        {
+            AppendSseBlock(sse, block);
+        }
+
+        StringBuilder jsonl = new();
+        foreach (SanitizedSseEvent item in capture.Events)
+        {
             JsonObject record = new()
             {
                 ["sequence"] = item.Sequence,
                 ["event"] = item.EventName,
                 ["id"] = item.Id,
                 ["retry"] = item.Retry,
-                ["comments"] = new JsonArray(
-                    item.Comments
-                        .Select(comment => (JsonNode?)JsonValue.Create(comment))
-                        .ToArray()),
+                ["comments"] = ToJsonArray(item.Comments),
                 ["dataType"] = item.DataType,
                 ["data"] = item.Data?.DeepClone(),
                 ["done"] = item.Done,
@@ -342,40 +482,62 @@ internal static class WireCapture
             jsonl.AppendLine(record.ToJsonString(JsonOptions));
         }
 
-        await File.WriteAllTextAsync(ssePath, sse.ToString(), Encoding.UTF8, cancellationToken)
-            .ConfigureAwait(false);
-        await File.WriteAllTextAsync(eventsPath, jsonl.ToString(), Encoding.UTF8, cancellationToken)
-            .ConfigureAwait(false);
+        if (!succeeded)
+        {
+            JsonObject failureSummary = new()
+            {
+                ["recordType"] = "failure-summary",
+                ["failureMarkers"] = ToJsonArray(summary.FailureMarkers),
+                ["missingMarkers"] = ToJsonArray(summary.MissingMarkers),
+                ["completed"] = summary.Completed,
+                ["done"] = summary.Done,
+            };
+            string renderedSummary = failureSummary.ToJsonString(JsonOptions);
+            sse.Append(": capture-failure ").AppendLine(renderedSummary).AppendLine();
+            jsonl.AppendLine(renderedSummary);
+        }
+
+        return (sse.ToString(), jsonl.ToString());
     }
 
-    private static void AppendSseEvent(StringBuilder output, SanitizedSseEvent item)
+    private static void AppendSseBlock(StringBuilder output, SanitizedSseBlock block)
     {
-        int dataIndex = 0;
-        int commentIndex = 0;
-        foreach (SseField field in item.OriginalFields)
+        foreach (SseField field in block.Fields)
         {
-            switch (field.Name)
+            if (field.Name == "comment")
             {
-                case "comment":
-                    output.Append(": ").AppendLine(item.Comments[commentIndex++]);
-                    break;
-                case "event":
-                    output.Append("event: ").AppendLine(item.EventName);
-                    break;
-                case "id":
-                    output.Append("id: ").AppendLine(item.Id);
-                    break;
-                case "retry":
-                    output.Append("retry: ").AppendLine(item.Retry);
-                    break;
-                case "data":
-                    output.Append("data: ")
-                        .AppendLine(item.RenderedDataLines[dataIndex++].TrimEnd('\r'));
-                    break;
+                output.Append(": ").AppendLine(field.Value);
+            }
+            else
+            {
+                output.Append(field.Name).Append(": ").AppendLine(field.Value);
             }
         }
 
         output.AppendLine();
+    }
+
+    private static async Task WriteAndFlushAsync(
+        string path,
+        string content,
+        CancellationToken cancellationToken)
+    {
+        await using FileStream stream = new(
+            path,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 4096,
+            FileOptions.Asynchronous | FileOptions.WriteThrough);
+        await using StreamWriter writer = new(
+            stream,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            bufferSize: 4096,
+            leaveOpen: true);
+        await writer.WriteAsync(content.AsMemory(), cancellationToken).ConfigureAwait(false);
+        await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        stream.Flush(flushToDisk: true);
     }
 
     private static async Task<string> ReadSafeExcerptAsync(
@@ -390,12 +552,74 @@ internal static class WireCapture
             detectEncodingFromByteOrderMarks: true,
             bufferSize: 1024,
             leaveOpen: false);
-        char[] buffer = new char[FailureExcerptLimit];
+        char[] buffer = new char[FailureExcerptLimit + 1];
         int count = await reader.ReadBlockAsync(buffer.AsMemory(), cancellationToken)
             .ConfigureAwait(false);
-        string raw = new(buffer, 0, count);
+        bool truncated = count > FailureExcerptLimit;
+        int excerptLength = Math.Min(count, FailureExcerptLimit);
+        string raw = new(buffer, 0, excerptLength);
         SensitiveValueSanitizer sanitizer = new([]);
-        return SanitizeText(sanitizer, raw, "data");
+
+        if (!truncated)
+        {
+            try
+            {
+                JsonNode? parsed = JsonNode.Parse(raw);
+                JsonNode? sanitized = sanitizer.Sanitize(parsed);
+                return sanitized?.ToJsonString(JsonOptions) ?? "null";
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        JsonObject marker = new()
+        {
+            ["bodyType"] = "unparseable-json",
+            ["length"] = excerptLength,
+            ["truncated"] = truncated,
+            ["redacted"] = true,
+        };
+        return marker.ToJsonString(JsonOptions);
+    }
+
+    private static ImmutableArray<string> DistributeRenderedData(int lineCount, string rendered)
+    {
+        ImmutableArray<string>.Builder lines = ImmutableArray.CreateBuilder<string>(lineCount);
+        for (int index = 1; index < lineCount; index++)
+        {
+            lines.Add(string.Empty);
+        }
+
+        lines.Add(rendered);
+        return lines.ToImmutable();
+    }
+
+    private static bool IsValidRetry(string value)
+        => value.Length > 0
+            && value.All(character => character is >= '0' and <= '9')
+            && long.TryParse(
+                value,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out _);
+
+    private static string? GetStringProperty(JsonObject? value, string propertyName)
+        => value?.TryGetPropertyValue(propertyName, out JsonNode? property) == true
+            && property is JsonValue scalar
+            && scalar.TryGetValue(out string? text)
+                ? text
+                : null;
+
+    private static JsonArray ToJsonArray(IEnumerable<string> values)
+        => new(values.Select(value => (JsonNode?)JsonValue.Create(value)).ToArray());
+
+    private static void AddDistinct(ImmutableArray<string>.Builder values, string value)
+    {
+        if (!values.Contains(value, StringComparer.Ordinal))
+        {
+            values.Add(value);
+        }
     }
 
     private static string SanitizeText(
@@ -419,12 +643,59 @@ internal static class WireCapture
         }
     }
 
+    private static void DeleteOwnedTemporaryFiles(string directory)
+    {
+        if (!Directory.Exists(directory))
+        {
+            return;
+        }
+
+        foreach (string path in Directory.EnumerateFiles(directory, ".hosted-responses*.tmp.*"))
+        {
+            File.Delete(path);
+        }
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = false,
     };
 
+    private sealed class CaptureState
+    {
+        internal string? LastEventId { get; set; }
+
+        internal string? Retry { get; set; }
+
+        internal bool Completed { get; set; }
+
+        internal bool Done { get; set; }
+
+        internal ImmutableArray<string>.Builder Failures { get; } =
+            ImmutableArray.CreateBuilder<string>();
+    }
+
+    private sealed record EvidencePaths(
+        string Directory,
+        string Sse,
+        string Events,
+        string FailedSse,
+        string FailedEvents)
+    {
+        internal string[] AllFinalPaths => [Sse, Events, FailedSse, FailedEvents];
+
+        internal static EvidencePaths Create(string directory)
+            => new(
+                directory,
+                Path.Combine(directory, SseFileName),
+                Path.Combine(directory, EventsFileName),
+                Path.Combine(directory, FailedSseFileName),
+                Path.Combine(directory, FailedEventsFileName));
+    }
+
     private sealed record SseField(string Name, string Value);
+
+    private sealed record SanitizedSseBlock(ImmutableArray<SseField> Fields);
 
     private sealed record SanitizedSseEvent(
         int Sequence,
@@ -435,7 +706,19 @@ internal static class WireCapture
         string? DataType,
         JsonNode? Data,
         bool Done,
+        string? Failure);
+
+    private sealed record SanitizedData(
+        JsonNode? Data,
+        string? DataType,
+        bool Done,
         string? Failure,
-        ImmutableArray<SseField> OriginalFields,
-        ImmutableArray<string> RenderedDataLines);
+        ImmutableArray<string> RenderedLines);
+
+    private sealed record SanitizedCapture(
+        ImmutableArray<SanitizedSseBlock> Blocks,
+        ImmutableArray<SanitizedSseEvent> Events,
+        bool Completed,
+        bool Done,
+        ImmutableArray<string> Failures);
 }
