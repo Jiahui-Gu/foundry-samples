@@ -228,6 +228,61 @@ public sealed class DiagnosticRecorderTests
     }
 
     [Fact]
+    public async Task RecordProviderStateAsync_RedactsAzureResourceScopesWithinOrdinaryText()
+    {
+        const string subscriptionId = "/subscriptions/11111111-2222-3333-4444-555555555555";
+        const string resourceGroupId = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-harness";
+        const string providerResourceId = "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/rg-harness/providers/Microsoft.KeyVault/vaults/harness-kv/secrets/probe/versions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        const string prefix = "Ordinary text before ";
+        const string suffix = " and after the ids.";
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordProviderStateAsync(new
+                {
+                    subscriptionId,
+                    resourceGroupId,
+                    providerResourceId,
+                    repeatedProviderResourceId = providerResourceId,
+                    message = $"{prefix}{subscriptionId}, {resourceGroupId}, and {providerResourceId}{suffix}",
+                });
+            }
+
+            using JsonDocument document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(Path.Combine(outputDirectory, "provider-state.jsonl")));
+            JsonElement root = document.RootElement;
+            string json = root.GetRawText();
+
+            Assert.DoesNotContain(subscriptionId, json, StringComparison.Ordinal);
+            Assert.DoesNotContain(resourceGroupId, json, StringComparison.Ordinal);
+            Assert.DoesNotContain(providerResourceId, json, StringComparison.Ordinal);
+            Assert.StartsWith("azure-resource-", root.GetProperty("subscriptionId").GetString(), StringComparison.Ordinal);
+            Assert.StartsWith("azure-resource-", root.GetProperty("resourceGroupId").GetString(), StringComparison.Ordinal);
+            Assert.StartsWith("azure-resource-", root.GetProperty("providerResourceId").GetString(), StringComparison.Ordinal);
+            Assert.Equal(
+                root.GetProperty("providerResourceId").GetString(),
+                root.GetProperty("repeatedProviderResourceId").GetString());
+
+            string message = root.GetProperty("message").GetString()!;
+            Assert.Contains(prefix, message, StringComparison.Ordinal);
+            Assert.Contains(suffix, message, StringComparison.Ordinal);
+            Assert.DoesNotContain(subscriptionId, message, StringComparison.Ordinal);
+            Assert.DoesNotContain(resourceGroupId, message, StringComparison.Ordinal);
+            Assert.DoesNotContain(providerResourceId, message, StringComparison.Ordinal);
+            Assert.Equal(
+                $"{prefix}{root.GetProperty("subscriptionId").GetString()}, {root.GetProperty("resourceGroupId").GetString()}, and {root.GetProperty("providerResourceId").GetString()}{suffix}",
+                message);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
     public async Task RecordMethods_WriteCompactParseableJsonlInCallOrder()
     {
         string outputDirectory = CreateOutputDirectory();
@@ -436,6 +491,51 @@ public sealed class DiagnosticRecorderTests
         {
             releaseProjection.Set();
             await recorder.DisposeAsync();
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordProviderStateAsync_ThrowsObjectDisposedExceptionBeforeCancellationForDisposedRecorder()
+    {
+        string outputDirectory = CreateOutputDirectory();
+        DiagnosticRecorder recorder = new(outputDirectory);
+        using CancellationTokenSource cts = new();
+
+        try
+        {
+            await recorder.DisposeAsync();
+            await recorder.DisposeAsync();
+            cts.Cancel();
+
+            await Assert.ThrowsAsync<ObjectDisposedException>(
+                () => recorder.RecordProviderStateAsync(new { value = "after-dispose" }, cts.Token));
+        }
+        finally
+        {
+            await recorder.DisposeAsync();
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordProviderStateAsync_PreservesCancellationForLiveRecorder()
+    {
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            await using var recorder = new DiagnosticRecorder(outputDirectory);
+            using CancellationTokenSource cts = new();
+            cts.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => recorder.RecordProviderStateAsync(new { value = "canceled-while-live" }, cts.Token));
+
+            Assert.False(File.Exists(Path.Combine(outputDirectory, "provider-state.jsonl")));
+        }
+        finally
+        {
             DeleteOutputDirectory(outputDirectory);
         }
     }

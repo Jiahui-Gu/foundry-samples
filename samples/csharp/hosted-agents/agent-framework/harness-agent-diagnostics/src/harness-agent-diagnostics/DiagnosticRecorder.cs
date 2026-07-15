@@ -108,7 +108,6 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
     private Task WriteAsync(string fileName, Func<object> valueFactory, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(valueFactory);
-        cancellationToken.ThrowIfCancellationRequested();
 
         lock (_lifecycleLock)
         {
@@ -538,7 +537,7 @@ internal sealed partial class SensitiveValueSanitizer
     [GeneratedRegex(@"(?i)(?<name>accountkey|sharedaccesssignature|clientsecret|password)\s*=\s*[^;\s]+")]
     private static partial Regex CredentialAssignmentRegex();
 
-    [GeneratedRegex(@"(?i)/subscriptions/[0-9a-f-]{36}(?:/resourcegroups/[^/\s]+)?/providers/[^/\s]+(?:/[^?\s]+)*")]
+    [GeneratedRegex(@"(?i)/subscriptions/[0-9a-f-]{36}(?:/resourcegroups/[a-z0-9](?:[a-z0-9._()-]*[a-z0-9_-])?)?(?:/providers/[a-z0-9](?:[a-z0-9._()-]*[a-z0-9_-])?(?:/[a-z0-9](?:[a-z0-9._()-]*[a-z0-9_-])?)+)?")]
     private static partial Regex AzureResourceIdRegex();
 
     [GeneratedRegex(@"\b(?:resp|msg|item|call|fc|rs)_[a-zA-Z0-9_-]{8,}\b")]
