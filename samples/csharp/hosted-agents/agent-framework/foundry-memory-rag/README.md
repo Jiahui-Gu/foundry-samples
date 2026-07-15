@@ -83,10 +83,13 @@ The agent host will start on `http://localhost:8088`.
 
 Run a few turns to seed memory, then ask the agent to recall:
 
+Use the same user identity for each request. The CLI sends it in the required
+local `x-agent-user-id` isolation header.
+
 ```bash
-azd ai agent invoke --local "Remember that I want to run my first 5k in October and I prefer morning workouts."
-azd ai agent invoke --local "I have a sensitive left knee, please avoid high-impact exercises."
-azd ai agent invoke --local "What do you already know about my training goals?"
+azd ai agent invoke --local --user-identity "memory-rag-demo-user" "Remember that I want to run my first 5k in October and I prefer morning workouts."
+azd ai agent invoke --local --user-identity "memory-rag-demo-user" "I have a sensitive left knee, please avoid high-impact exercises."
+azd ai agent invoke --local --user-identity "memory-rag-demo-user" "What do you already know about my training goals?"
 ```
 
 Or use curl directly:
@@ -94,10 +97,12 @@ Or use curl directly:
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: memory-rag-demo-user" \
   -d '{"input": "Remember that I want to run my first 5k in October and I prefer morning workouts.", "stream": false}' | jq .
 
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: memory-rag-demo-user" \
   -d '{"input": "What do you already know about my training goals?", "stream": false}' | jq .
 ```
 
@@ -116,7 +121,7 @@ For the full deployment guide, see [Deploy a hosted agent](https://learn.microso
 ### Invoke the deployed agent
 
 ```bash
-azd ai agent invoke "What do you already know about my training goals?"
+azd ai agent invoke --user-identity "memory-rag-demo-user" "What do you already know about my training goals?"
 ```
 
 Stream logs from the running agent with `azd ai agent monitor`.
