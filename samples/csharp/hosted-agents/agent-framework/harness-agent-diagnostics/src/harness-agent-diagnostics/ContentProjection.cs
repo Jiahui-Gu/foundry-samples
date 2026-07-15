@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Runtime.CompilerServices;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -87,10 +88,22 @@ public static class ContentProjection
     {
         ArgumentNullException.ThrowIfNull(update);
 
-        JsonObject result = ProjectSafePublicProperties(update);
-        result["type"] = update.GetType().Name;
-        result["contents"] = new JsonArray(GetContents(update).Select(Project).ToArray());
-        return result;
+        return new JsonObject
+        {
+            ["type"] = update.GetType().Name,
+            ["role"] = update.Role?.ToString(),
+            ["authorName"] = update.AuthorName,
+            ["agentId"] = update.AgentId,
+            ["responseId"] = update.ResponseId,
+            ["messageId"] = update.MessageId,
+            ["createdAt"] = ProjectSafeValue(update.CreatedAt),
+            ["finishReason"] = update.FinishReason?.ToString(),
+            ["continuationToken"] = ProjectContinuationToken(update.ContinuationToken),
+            ["text"] = update.Text,
+            ["additionalProperties"] = ProjectAdditionalProperties(update.AdditionalProperties),
+            ["rawRepresentationType"] = update.RawRepresentation?.GetType().FullName,
+            ["contents"] = new JsonArray(update.Contents.Select(Project).ToArray()),
+        };
     }
 
     private static JsonObject ProjectUsageDetails(UsageDetails? details)
@@ -110,12 +123,9 @@ public static class ContentProjection
     }
 
     private static JsonObject ProjectFallbackProperties(AIContent content)
-        => ProjectSafePublicProperties(content);
-
-    private static JsonObject ProjectSafePublicProperties(object source)
     {
         JsonObject result = new();
-        foreach (PropertyInfo property in source.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public))
+        foreach (PropertyInfo property in content.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public))
         {
             if (property.GetIndexParameters().Length != 0
                 || property.Name is nameof(AIContent.RawRepresentation)
@@ -126,27 +136,53 @@ public static class ContentProjection
                 continue;
             }
 
-            object? value;
-            try
+            string name = ToCamelCase(property.Name);
+            if (!HasCompilerGeneratedAutoPropertyGetter(property))
             {
-                value = property.GetValue(source);
-            }
-            catch (Exception)
-            {
+                result[name] = OpaqueType(property.PropertyType);
                 continue;
             }
 
-            result[ToCamelCase(property.Name)] = ProjectSafeValue(value);
+            object? value = property.GetValue(content);
+            result[name] = ProjectSafeValue(value);
         }
 
         return result;
     }
 
-    private static IEnumerable<AIContent> GetContents(AgentResponseUpdate update)
+    private static JsonObject ProjectContinuationToken(ResponseContinuationToken? token)
+        => token is null
+            ? new JsonObject()
+            : new JsonObject
+            {
+                ["type"] = token.GetType().FullName,
+                ["byteLength"] = token.ToBytes().Length,
+            };
+
+    private static JsonObject ProjectAdditionalProperties(IEnumerable<KeyValuePair<string, object?>>? additionalProperties)
     {
-        PropertyInfo? property = update.GetType().GetProperty("Contents", BindingFlags.Instance | BindingFlags.Public);
-        return property?.GetValue(update) as IEnumerable<AIContent> ?? [];
+        JsonObject result = new();
+        if (additionalProperties is null)
+        {
+            return result;
+        }
+
+        foreach ((string key, object? value) in additionalProperties)
+        {
+            result[key] = ProjectSafeValue(value);
+        }
+
+        return result;
     }
+
+    private static bool HasCompilerGeneratedAutoPropertyGetter(PropertyInfo property)
+        => property.GetMethod?.IsDefined(typeof(CompilerGeneratedAttribute), inherit: true) == true
+            && property.DeclaringType?.GetField(
+                $"<{property.Name}>k__BackingField",
+                BindingFlags.Instance | BindingFlags.NonPublic) is not null;
+
+    private static JsonObject OpaqueType(Type type)
+        => new() { ["type"] = type.FullName };
 
     private static JsonNode? ProjectSafeValue(object? value, int depth = 0)
     {

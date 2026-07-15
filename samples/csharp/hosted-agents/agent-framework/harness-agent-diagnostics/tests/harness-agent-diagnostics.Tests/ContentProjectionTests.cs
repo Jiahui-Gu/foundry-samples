@@ -1,5 +1,6 @@
 using System.Text.Json;
 using HarnessAgentDiagnostics;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace HarnessAgentDiagnostics.Tests;
@@ -59,10 +60,62 @@ public sealed class ContentProjectionTests
         Assert.DoesNotContain("raw-secret", json, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Project_AgentResponseUpdate_ProjectsEveryEnvelopeFieldAndOrderedContents()
+    {
+        DateTimeOffset createdAt = new(2026, 7, 15, 10, 30, 0, TimeSpan.Zero);
+        AgentResponseUpdate update = new(ChatRole.Assistant, [new TextContent("first"), new TextContent("second")])
+        {
+            AuthorName = "probe-author",
+            AgentId = "agent-123",
+            ResponseId = "resp_0123456789abcdefghijk",
+            MessageId = "msg_0123456789abcdefghijk",
+            CreatedAt = createdAt,
+            FinishReason = ChatFinishReason.Stop,
+            ContinuationToken = ResponseContinuationToken.FromBytes("continuation-token"u8.ToArray()),
+            AdditionalProperties = new AdditionalPropertiesDictionary(new Dictionary<string, object?> { ["probe"] = true }),
+            RawRepresentation = new RawEnvelope(),
+        };
+
+        JsonElement projection = JsonSerializer.SerializeToElement(ContentProjection.Project(update));
+
+        Assert.Equal(update.Role?.ToString(), projection.GetProperty("role").GetString());
+        Assert.Equal("probe-author", projection.GetProperty("authorName").GetString());
+        Assert.Equal("agent-123", projection.GetProperty("agentId").GetString());
+        Assert.Equal("resp_0123456789abcdefghijk", projection.GetProperty("responseId").GetString());
+        Assert.Equal("msg_0123456789abcdefghijk", projection.GetProperty("messageId").GetString());
+        Assert.Equal(createdAt, projection.GetProperty("createdAt").GetDateTimeOffset());
+        Assert.Equal(update.FinishReason?.ToString(), projection.GetProperty("finishReason").GetString());
+        Assert.Equal(typeof(ResponseContinuationToken).FullName, projection.GetProperty("continuationToken").GetProperty("type").GetString());
+        Assert.Equal("firstsecond", projection.GetProperty("text").GetString());
+        Assert.True(projection.GetProperty("additionalProperties").GetProperty("probe").GetBoolean());
+        Assert.Equal(typeof(RawEnvelope).FullName, projection.GetProperty("rawRepresentationType").GetString());
+        Assert.Equal(new[] { "first", "second" }, projection.GetProperty("contents").EnumerateArray().Select(content => content.GetProperty("text").GetString()));
+    }
+
+    [Fact]
+    public void Project_FallbackSkipsCustomGettersWhileRetainingTheirNamesAndTypes()
+    {
+        JsonElement properties = JsonSerializer.SerializeToElement(ContentProjection.Project(new ThrowingContent()))
+            .GetProperty("properties");
+
+        Assert.Equal("visible", properties.GetProperty("safe").GetString());
+        Assert.Equal(typeof(string).FullName, properties.GetProperty("throws").GetProperty("type").GetString());
+    }
+
     private sealed class UnknownContent : AIContent
     {
         public object Opaque { get; } = new { value = "raw-secret" };
 
         public IReadOnlyList<int> Numbers { get; } = Enumerable.Range(1, 101).ToArray();
     }
+
+    private sealed class ThrowingContent : AIContent
+    {
+        public string Safe { get; } = "visible";
+
+        public string Throws => throw new InvalidOperationException("must not be invoked");
+    }
+
+    private sealed class RawEnvelope;
 }

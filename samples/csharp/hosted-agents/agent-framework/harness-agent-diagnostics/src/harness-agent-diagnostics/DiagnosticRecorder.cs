@@ -13,10 +13,11 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
     private const string ProviderStateFileName = "provider-state.jsonl";
     private const string ActivitiesFileName = "activities.jsonl";
 
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly Dictionary<string, StreamWriter> _writers = new(StringComparer.Ordinal);
     private readonly SensitiveValueSanitizer _sanitizer;
     private bool _disposed;
+    private long _nextRecordSequence;
 
     public DiagnosticRecorder(string outputDirectory, IEnumerable<string>? sensitiveValues = null)
     {
@@ -32,17 +33,19 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
 
     public string OutputDirectory { get; }
 
-    public Task RecordAgentResponseUpdateAsync(object update, CancellationToken cancellationToken = default)
-        => WriteAsync(AgentResponseUpdatesFileName, update, cancellationToken);
-
     public Task RecordAgentResponseUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken = default)
         => WriteAsync(AgentResponseUpdatesFileName, ContentProjection.Project(update), cancellationToken);
 
-    public Task RecordProviderStateAsync(object state, CancellationToken cancellationToken = default)
-        => WriteAsync(ProviderStateFileName, state, cancellationToken);
+    public Task RecordProviderStateAsync(object providerState, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(providerState);
+        if (providerState is AgentResponseUpdate)
+        {
+            throw new ArgumentException("Agent response updates must be recorded with the strongly typed update method.", nameof(providerState));
+        }
 
-    public Task RecordActivityAsync(object activity, CancellationToken cancellationToken = default)
-        => WriteAsync(ActivitiesFileName, activity, cancellationToken);
+        return WriteAsync(ProviderStateFileName, providerState, cancellationToken);
+    }
 
     public Task RecordActivityAsync(ActivitySnapshot activity, CancellationToken cancellationToken = default)
         => WriteAsync(ActivitiesFileName, ProjectActivity(activity), cancellationToken);
@@ -54,10 +57,15 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
             return;
         }
 
-        _disposed = true;
-        await _writeLock.WaitAsync().ConfigureAwait(false);
+        await _writeGate.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
             foreach (StreamWriter writer in _writers.Values)
             {
                 await writer.FlushAsync().ConfigureAwait(false);
@@ -68,8 +76,7 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
         }
         finally
         {
-            _writeLock.Release();
-            _writeLock.Dispose();
+            _writeGate.Release();
         }
     }
 
@@ -79,20 +86,22 @@ public sealed class DiagnosticRecorder : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(value);
         cancellationToken.ThrowIfCancellationRequested();
 
-        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             JsonNode? node = CreateSafeNode(value);
             JsonNode sanitizedNode = _sanitizer.Sanitize(node) ?? JsonValue.Create((string?)null)!;
-            string json = sanitizedNode.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+            JsonObject record = sanitizedNode as JsonObject ?? new JsonObject { ["value"] = sanitizedNode };
+            record["recordSequence"] = ++_nextRecordSequence;
+            string json = record.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
             StreamWriter writer = GetWriter(fileName);
-            await writer.WriteLineAsync(json.AsMemory(), cancellationToken).ConfigureAwait(false);
-            await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await writer.WriteLineAsync(json).ConfigureAwait(false);
+            await writer.FlushAsync().ConfigureAwait(false);
         }
         finally
         {
-            _writeLock.Release();
+            _writeGate.Release();
         }
     }
 
@@ -291,7 +300,17 @@ internal sealed partial class SensitiveValueSanitizer
                     continue;
                 }
 
-                obj[name] = Sanitize(child, name);
+                if (IsSensitiveValueProperty(name))
+                {
+                    obj[name] = JsonValue.Create("[REDACTED]");
+                    continue;
+                }
+
+                JsonNode? sanitizedChild = Sanitize(child, name);
+                if (!ReferenceEquals(child, sanitizedChild))
+                {
+                    obj[name] = sanitizedChild;
+                }
             }
 
             return obj;
@@ -301,7 +320,12 @@ internal sealed partial class SensitiveValueSanitizer
         {
             for (int index = 0; index < array.Count; index++)
             {
-                array[index] = Sanitize(array[index], propertyName);
+                JsonNode? child = array[index];
+                JsonNode? sanitizedChild = Sanitize(child, propertyName);
+                if (!ReferenceEquals(child, sanitizedChild))
+                {
+                    array[index] = sanitizedChild;
+                }
             }
 
             return array;
@@ -323,9 +347,10 @@ internal sealed partial class SensitiveValueSanitizer
             sanitized = sanitized.Replace(registeredValue, GetAlias("sensitive", registeredValue), StringComparison.Ordinal);
         }
 
-        sanitized = BearerTokenRegex().Replace(
-            sanitized,
-            match => string.Concat("Bearer", " ", GetAlias("token", match.Groups["token"].Value)));
+        sanitized = BearerTokenRegex().Replace(sanitized, "Bearer [REDACTED]");
+        sanitized = JwtRegex().Replace(sanitized, "[REDACTED]");
+        sanitized = ApiKeyRegex().Replace(sanitized, "[REDACTED]");
+        sanitized = CredentialAssignmentRegex().Replace(sanitized, "${name}=[REDACTED]");
         sanitized = AzureResourceIdRegex().Replace(sanitized, match => GetAlias("azure-resource", match.Value));
         sanitized = OpenAiIdentifierRegex().Replace(sanitized, match => GetAlias(GetOpenAiIdentifierCategory(match.Value), match.Value));
 
@@ -371,6 +396,36 @@ internal sealed partial class SensitiveValueSanitizer
             || name.Equals("stackTrace", StringComparison.OrdinalIgnoreCase)
             || name.Equals("exception", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsSensitiveValueProperty(string name)
+    {
+        string normalized = string.Concat(name.Where(char.IsLetterOrDigit)).ToLowerInvariant();
+        return normalized is "authorization"
+            or "authorizationheader"
+            or "accesskey"
+            or "apikey"
+            or "password"
+            or "credential"
+            or "credentials"
+            or "connectionstring"
+            or "clientassertion"
+            or "privatekey"
+            or "accountkey"
+            or "sharedaccesskey"
+            or "sastoken"
+            || normalized.EndsWith("accesstoken", StringComparison.Ordinal)
+            || normalized.EndsWith("refreshtoken", StringComparison.Ordinal)
+            || normalized.EndsWith("idtoken", StringComparison.Ordinal)
+            || normalized.EndsWith("token", StringComparison.Ordinal)
+            || normalized.EndsWith("continuationtoken", StringComparison.Ordinal)
+            || normalized.EndsWith("apikey", StringComparison.Ordinal)
+            || normalized.EndsWith("clientsecret", StringComparison.Ordinal)
+            || normalized.EndsWith("credential", StringComparison.Ordinal)
+            || normalized.EndsWith("credentials", StringComparison.Ordinal)
+            || normalized.EndsWith("connectionstring", StringComparison.Ordinal)
+            || normalized.EndsWith("password", StringComparison.Ordinal)
+            || normalized.Contains("secret", StringComparison.Ordinal);
+    }
+
     private static bool IsGuidIdentifierProperty(string? propertyName)
         => propertyName is not null
             && (propertyName.Contains("tenant", StringComparison.OrdinalIgnoreCase)
@@ -384,6 +439,15 @@ internal sealed partial class SensitiveValueSanitizer
 
     [GeneratedRegex(@"(?i)\bbearer\s+(?<token>[a-z0-9\-._~+/]+=*)")]
     private static partial Regex BearerTokenRegex();
+
+    [GeneratedRegex(@"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{6,}\b")]
+    private static partial Regex JwtRegex();
+
+    [GeneratedRegex(@"\bsk-[a-zA-Z0-9_-]{16,}\b")]
+    private static partial Regex ApiKeyRegex();
+
+    [GeneratedRegex(@"(?i)(?<name>accountkey|sharedaccesssignature|clientsecret|password)\s*=\s*[^;\s]+")]
+    private static partial Regex CredentialAssignmentRegex();
 
     [GeneratedRegex(@"(?i)/subscriptions/[0-9a-f-]{36}(?:/resourcegroups/[^/\s]+)?/providers/[^/\s]+(?:/[^?\s]+)*")]
     private static partial Regex AzureResourceIdRegex();

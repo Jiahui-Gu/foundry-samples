@@ -1,5 +1,7 @@
 using System.Text.Json;
 using HarnessAgentDiagnostics;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 
 namespace HarnessAgentDiagnostics.Tests;
 
@@ -101,6 +103,120 @@ public sealed class DiagnosticRecorderTests
             Assert.DoesNotContain("/subscriptions/11111111-2222-3333-4444-555555555555", output, StringComparison.Ordinal);
             Assert.DoesNotContain("credential-secret", output, StringComparison.Ordinal);
             Assert.DoesNotContain("exception-secret", output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordProviderStateAsync_RedactsPlainSecretFieldsAndCredentialLookingStrings()
+    {
+        const string accessToken = "plain-access-token";
+        const string apiKey = "plain-api-key";
+        const string clientSecret = "plain-client-secret";
+        const string credentialLookingValue = "sk-proj-0123456789abcdefghijk";
+        const string jwtLookingValue = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwcm9iZSJ9.signature";
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordProviderStateAsync(new
+                {
+                    accessToken,
+                    refreshToken = "plain-refresh-token",
+                    idToken = "plain-id-token",
+                    apiKey,
+                    clientSecret,
+                    credential = "plain-credential",
+                    connectionString = "Endpoint=https://example.test;AccountKey=plain-account-key",
+                    nested = new Dictionary<string, object?>
+                    {
+                        ["authorization"] = "plain-authorization",
+                        ["password"] = "plain-password",
+                    },
+                    unlabelledKey = credentialLookingValue,
+                    unlabelledJwt = jwtLookingValue,
+                    eventName = "response.output_text.delta",
+                    text = "ordinary diagnostic text",
+                    model = "gpt-4.1-mini",
+                });
+            }
+
+            string output = await File.ReadAllTextAsync(Path.Combine(outputDirectory, "provider-state.jsonl"));
+
+            foreach (string secret in new[]
+            {
+                accessToken, apiKey, clientSecret, credentialLookingValue, jwtLookingValue,
+                "plain-refresh-token", "plain-id-token", "plain-credential", "plain-account-key", "plain-password",
+            })
+            {
+                Assert.DoesNotContain(secret, output, StringComparison.Ordinal);
+            }
+
+            Assert.Contains("response.output_text.delta", output, StringComparison.Ordinal);
+            Assert.Contains("ordinary diagnostic text", output, StringComparison.Ordinal);
+            Assert.Contains("gpt-4.1-mini", output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordAgentResponseUpdateAsync_OnlyAcceptsProjectedUpdates()
+    {
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            AgentResponseUpdate update = new(ChatRole.Assistant, [new TextReasoningContent("visible") { ProtectedData = "protected-secret" }]);
+
+            Assert.Null(typeof(DiagnosticRecorder).GetMethod(
+                nameof(DiagnosticRecorder.RecordAgentResponseUpdateAsync),
+                [typeof(object)]));
+
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                await recorder.RecordAgentResponseUpdateAsync(update);
+            }
+
+            string output = await File.ReadAllTextAsync(Path.Combine(outputDirectory, "agent-response-updates.jsonl"));
+            Assert.Contains("visible", output, StringComparison.Ordinal);
+            Assert.DoesNotContain("protected-secret", output, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteOutputDirectory(outputDirectory);
+        }
+    }
+
+    [Fact]
+    public async Task RecordProviderStateAsync_AssignsContiguousSequenceNumbersToConcurrentAcceptedRecords()
+    {
+        string outputDirectory = CreateOutputDirectory();
+
+        try
+        {
+            await using (var recorder = new DiagnosticRecorder(outputDirectory))
+            {
+                Task[] records = Enumerable.Range(0, 32)
+                    .Select(value => recorder.RecordProviderStateAsync(new { value }))
+                    .ToArray();
+                await Task.WhenAll(records);
+            }
+
+            string[] lines = await File.ReadAllLinesAsync(Path.Combine(outputDirectory, "provider-state.jsonl"));
+            int[] recordSequences = lines
+                .Select(line => JsonDocument.Parse(line).RootElement.GetProperty("recordSequence").GetInt32())
+                .Order()
+                .ToArray();
+
+            Assert.Equal(Enumerable.Range(1, 32), recordSequences);
         }
         finally
         {

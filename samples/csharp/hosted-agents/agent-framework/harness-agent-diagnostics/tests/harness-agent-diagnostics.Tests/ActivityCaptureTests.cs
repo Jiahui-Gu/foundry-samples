@@ -30,7 +30,10 @@ public sealed class ActivityCaptureTests
                 "child",
                 ActivityKind.Internal,
                 parent.Context,
-                links: [new ActivityLink(linkedContext)]))
+                links: [new ActivityLink(linkedContext, new ActivityTagsCollection
+                {
+                    ["link.tag"] = "linked",
+                })]))
             {
                 Assert.NotNull(child);
                 child.SetTag("gen_ai.request.model", "gpt-4.1-mini");
@@ -53,8 +56,19 @@ public sealed class ActivityCaptureTests
         Assert.Equal("child", snapshots[0].OperationName);
         Assert.Equal("parent", snapshots[1].OperationName);
         Assert.Equal("gpt-4.1-mini", snapshots[0].Tags["gen_ai.request.model"]);
-        Assert.Equal("response.output_text.delta", Assert.Single(snapshots[0].Events).Name);
-        Assert.Single(snapshots[0].Links);
+        Assert.Equal(snapshots[1].TraceId, snapshots[0].TraceId);
+        Assert.Equal(snapshots[1].SpanId, snapshots[0].ParentSpanId);
+        Assert.NotNull(snapshots[0].ParentId);
+        Assert.Contains(snapshots[1].SpanId.ToHexString(), snapshots[0].ParentId, StringComparison.Ordinal);
+        Assert.NotEqual(default, snapshots[0].StartTimeUtc);
+        Assert.True(snapshots[0].Duration >= TimeSpan.Zero);
+        ActivityEventSnapshot activityEvent = Assert.Single(snapshots[0].Events);
+        Assert.Equal("response.output_text.delta", activityEvent.Name);
+        Assert.Equal(1, activityEvent.Tags["sequence"]);
+        ActivityLinkSnapshot link = Assert.Single(snapshots[0].Links);
+        Assert.Equal(linkedContext.TraceId, link.TraceId);
+        Assert.Equal(linkedContext.SpanId, link.SpanId);
+        Assert.Equal("linked", link.Tags["link.tag"]);
         Assert.Equal(ActivityStatusCode.Error, snapshots[1].Status);
         Assert.Equal("completed", snapshots[1].StatusDescription);
         Assert.Equal("resp_0123456789abcdefghijk", snapshots[1].Baggage["request"]);
