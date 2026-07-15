@@ -100,9 +100,12 @@ public class BrowserSession
         foreach (var dir in pathDirs)
         {
             var candidate = Path.Combine(dir, "playwright-cli");
+            if (OperatingSystem.IsWindows())
+            {
+                if (File.Exists(candidate + ".exe")) return candidate + ".exe";
+                if (File.Exists(candidate + ".cmd")) return candidate + ".cmd";
+            }
             if (File.Exists(candidate)) return candidate;
-            if (File.Exists(candidate + ".exe")) return candidate + ".exe";
-            if (File.Exists(candidate + ".cmd")) return candidate + ".cmd";
         }
         return "playwright-cli";
     }

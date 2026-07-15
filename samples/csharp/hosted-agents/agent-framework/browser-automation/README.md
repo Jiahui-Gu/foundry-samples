@@ -163,7 +163,7 @@ The agent host will start on `http://localhost:8088`.
 In a separate terminal, send a browser-automation request:
 
 ```bash
-azd ai agent invoke --local --new-session "Open https://example.com and report the page title."
+azd ai agent invoke --local --new-session --user-identity local-browser-user "Open https://example.com and report the page title."
 ```
 
 Or use curl directly:
@@ -171,14 +171,20 @@ Or use curl directly:
 ```bash
 curl -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-browser-user" \
   -d '{"input": "Open https://example.com and report the page title."}'
 ```
+
+Local Responses API requests require a stable user identity for session isolation. Use
+`--user-identity` with `azd`, or send the equivalent `x-agent-user-id` header with an
+HTTP client.
 
 The server returns a response ID you can use to continue the same conversation and reuse the browser session in later requests:
 
 ```bash
 curl -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-browser-user" \
   -d '{"input": "Now take a screenshot of the page.", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
 ```
 

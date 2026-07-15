@@ -95,11 +95,17 @@ AIAgent baseAgent = new AIProjectClient(projectEndpoint, new DefaultAzureCredent
 // 1. Function invocation middleware: intercepts create_session results to store
 //    cdp_url + live_view_url server-side (model never sees them).
 // 2. Agent-level middleware: injects live_view_url into response post-call.
+#pragma warning disable MAAI001 // Agent skills tool approval is experimental
 var agent = baseAgent
     .AsBuilder()
+    .UseToolApproval(new ToolApprovalAgentOptions
+    {
+        AutoApprovalRules = [AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule],
+    })
     .Use(Middlewares.FunctionInvocationMiddleware)
     .Use(Middlewares.LiveViewUrlMiddleware, Middlewares.LiveViewUrlStreamingMiddleware)
     .Build();
+#pragma warning restore MAAI001
 
 // ── Host setup ───────────────────────────────────────────────────────────────
 var builder = AgentHost.CreateBuilder(args);
