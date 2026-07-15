@@ -1,6 +1,7 @@
 using Azure.Identity;
 using HelloWorldA365.AgentLogic;
 using HelloWorldA365.AgentLogic.ResponsesApi;
+using HelloWorldA365.Models;
 using HelloWorldA365.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Hosting.AspNetCore;
@@ -45,6 +46,8 @@ builder.AddAgent<A365AgentApplication>();
 // builder.Services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>([new TranscriptLoggerMiddleware(new FileTranscriptLogger())]);
 
 builder.Services.AddSingleton<ResponsesApiAgentLogicServiceFactory>();
+builder.Services.AddSingleton(_ => new DefaultAzureCredential());
+builder.Services.AddHttpClient<LocalChatService>();
 
 // Register auth helper
 builder.Services.AddSingleton<AgentTokenHelper>();
@@ -121,6 +124,11 @@ app.MapGet("/liveness", () => "Hello World from HelloWorldA365Agent!");
 
 app.MapGet("/readiness", () => "Hello World from HelloWorldA365Agent!");
 
+if (app.Environment.IsDevelopment())
+{
+    app.MapPost("/api/local-chat", HandleLocalChatAsync);
+}
+
 
 if (!app.Environment.IsDevelopment())
 {
@@ -146,3 +154,17 @@ app.UseHttpsRedirection();
 app.MapControllers();
 
 app.Run();
+
+static async Task<IResult> HandleLocalChatAsync(
+    LocalChatRequest request,
+    LocalChatService localChatService,
+    CancellationToken cancellationToken)
+{
+    if (string.IsNullOrWhiteSpace(request.Message))
+    {
+        return Results.BadRequest(new { error = "The message field is required." });
+    }
+
+    var response = await localChatService.RespondAsync(request.Message, cancellationToken);
+    return Results.Ok(new LocalChatResponse(response));
+}

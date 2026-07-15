@@ -384,37 +384,9 @@ public class ResponsesApiAgentLogicService : IAgentLogicService
     {
         try
         {
-            using var doc = JsonDocument.Parse(responseJson);
-            var root = doc.RootElement;
-
-            if (root.TryGetProperty("output", out var output) && output.ValueKind == JsonValueKind.Array)
+            if (ResponsesApiResponseParser.TryExtractOutputText(responseJson, out var outputText))
             {
-                var textParts = new StringBuilder();
-                foreach (var item in output.EnumerateArray())
-                {
-                    if (item.TryGetProperty("type", out var type) && type.GetString() == "message")
-                    {
-                        if (item.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
-                        {
-                            foreach (var contentItem in content.EnumerateArray())
-                            {
-                                if (contentItem.TryGetProperty("type", out var contentType) &&
-                                    contentType.GetString() == "output_text" &&
-                                    contentItem.TryGetProperty("text", out var text))
-                                {
-                                    textParts.Append(text.GetString());
-                                }
-                            }
-                        }
-                    }
-                }
-                return textParts.ToString();
-            }
-
-            // Fallback: try to get a simple text response
-            if (root.TryGetProperty("output_text", out var simpleText))
-            {
-                return simpleText.GetString() ?? string.Empty;
+                return outputText;
             }
 
             _logger.LogWarning("Could not extract output text from Responses API response");

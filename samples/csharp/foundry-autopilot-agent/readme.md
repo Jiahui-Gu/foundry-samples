@@ -12,6 +12,7 @@ Ensure you have the following installed:
 
 | Requirement | Description |
 |-------------|-------------|
+| [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) | Local developer authentication |
 | [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) | Infrastructure deployment tool |
 | [.NET 9.0 SDK](https://dotnet.microsoft.com/download) | Development framework |
 
@@ -20,6 +21,36 @@ Ensure you have the following installed:
 - **Owner** role on the Azure subscription
 - **Foundry User** or **Cognitive Services User** role at subscription or resource group level
 - **Tenant Admin** role for organization-wide configuration
+
+---
+
+## 💻 Run Locally
+
+The local path exercises the agent's prompt and Foundry model call without deploying the A365 blueprint. A365 identity and MCP tools are available only after deployment.
+
+You need an existing Azure AI Services or Foundry endpoint, a model deployment that supports the Responses API, and permission to invoke that deployment. Authenticate with `az login`, then run these commands from this sample directory:
+
+```powershell
+$port = 6280 # Choose any unused local port.
+$env:ASPNETCORE_ENVIRONMENT = "Development"
+$env:AzureOpenAIEndpoint = "https://<account>.cognitiveservices.azure.com/"
+$env:ModelDeployment = "<model-deployment-name>"
+
+dotnet restore .\src\hello_world_a365_agent\HelloWorldA365Agent.csproj
+dotnet run --project .\src\hello_world_a365_agent\HelloWorldA365Agent.csproj --no-launch-profile --urls "http://localhost:$port"
+```
+
+Wait for the `Now listening on` log line. In a second PowerShell terminal, use the same port to verify readiness and invoke the agent:
+
+```powershell
+$port = 6280
+Invoke-RestMethod "http://localhost:$port/readiness"
+
+$body = @{ message = "hello, are you up?" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "http://localhost:$port/api/local-chat" -ContentType "application/json" -Body $body
+```
+
+A successful invocation returns JSON with a non-empty `response` field. Stop the local process with `Ctrl+C`.
 
 ---
 
@@ -171,4 +202,3 @@ curl -N \
 ## 🤝 Support
 
 For issues or questions, please refer to the official documentation or contact your Azure administrator.
-
