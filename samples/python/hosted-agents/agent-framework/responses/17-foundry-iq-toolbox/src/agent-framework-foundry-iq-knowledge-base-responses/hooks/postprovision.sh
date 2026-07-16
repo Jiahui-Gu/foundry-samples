@@ -50,6 +50,11 @@ azd ai connection create knowledge-base-mcp --kind remote-tool --force \
   --target "$KB" --auth-type agentic-identity \
   --audience https://search.azure.com --metadata "ApiType=Azure"
 
+echo "Creating the knowledge-base-mcp-local connection..."
+azd ai connection create knowledge-base-mcp-local --kind remote-tool --force \
+  --target "$KB" --auth-type user-entra-token \
+  --audience https://search.azure.com --metadata "ApiType=Azure"
+
 echo "Creating the knowledge-base toolbox..."
 # Toolbox versions are immutable and 'create' has no upsert flag, so skip it if
 # the toolbox already exists (e.g. on a repeat azd provision). 'toolbox show'
@@ -67,9 +72,24 @@ else
   azd ai toolbox create knowledge-base --from-file "$TMP"
 fi
 
-# The toolbox's unversioned MCP alias is deterministic from the project endpoint.
-PROJ="$(azd env get-value FOUNDRY_PROJECT_ENDPOINT | sed 's#/*$##')"
-TOOLBOX="$PROJ/toolboxes/knowledge-base/mcp?api-version=v1"
-azd env set TOOLBOX_ENDPOINT "$TOOLBOX"
+echo "Creating the knowledge-base-local toolbox..."
+if azd ai toolbox show knowledge-base-local >/dev/null 2>&1; then
+  echo "Toolbox knowledge-base-local already exists; skipping create."
+else
+  TMPDIR_KB_LOCAL="$(mktemp -d)"
+  trap 'rm -rf "$TMPDIR_KB" "$TMPDIR_KB_LOCAL"' EXIT
+  TMP_LOCAL="$TMPDIR_KB_LOCAL/toolbox.local.yaml"
+  KB="$KB" awk '{ gsub(/\$\{KB_MCP_ENDPOINT\}/, ENVIRON["KB"]); print }' ./toolbox.local.yaml > "$TMP_LOCAL"
+  azd ai toolbox create knowledge-base-local --from-file "$TMP_LOCAL"
+fi
 
-echo "Done. TOOLBOX_ENDPOINT = $TOOLBOX"
+# Local runs use the signed-in developer identity. Hosted deployments receive
+# the Agentic Identity toolbox through the azure.yaml environment mapping.
+PROJ="$(azd env get-value FOUNDRY_PROJECT_ENDPOINT | sed 's#/*$##')"
+HOSTED_TOOLBOX="$PROJ/toolboxes/knowledge-base/mcp?api-version=v1"
+LOCAL_TOOLBOX="$PROJ/toolboxes/knowledge-base-local/mcp?api-version=v1"
+azd env set HOSTED_TOOLBOX_ENDPOINT "$HOSTED_TOOLBOX"
+azd env set TOOLBOX_ENDPOINT "$LOCAL_TOOLBOX"
+
+echo "Done. TOOLBOX_ENDPOINT = $LOCAL_TOOLBOX"
+echo "Done. HOSTED_TOOLBOX_ENDPOINT = $HOSTED_TOOLBOX"
