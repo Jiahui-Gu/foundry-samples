@@ -135,27 +135,33 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 
 ### Or run manually, then open the Inspector
 
-1. Restore dependencies:
+1. From the sample directory, navigate to the .NET project:
+
+   ```bash
+   cd src/foundry-memory-rag
+   ```
+
+2. Restore dependencies:
 
    ```bash
    dotnet restore
    ```
 
-2. Configure the agent: copy `.env.example` to `.env` and fill in the [required variables](#environment-variables) (including `AZURE_AI_EMBEDDING_DEPLOYMENT_NAME`). The sample loads `.env` automatically on startup.
+3. Configure the agent: copy `.env.example` to `.env` and fill in the [required variables](#environment-variables) (including `AZURE_AI_EMBEDDING_DEPLOYMENT_NAME`). The sample loads `.env` automatically on startup.
 
-3. Sign in to Azure with the Azure CLI so `DefaultAzureCredential` can authenticate the terminal process (the **F5** path reuses the Azure sign-in from the Foundry Toolkit, so it doesn't need a separate `az login`):
+4. Sign in to Azure with the Azure CLI so `DefaultAzureCredential` can authenticate the terminal process (the **F5** path reuses the Azure sign-in from the Foundry Toolkit, so it doesn't need a separate `az login`):
 
    ```bash
    az login
    ```
 
-4. Start the agent (listens on `http://localhost:8088`):
+5. Start the agent (listens on `http://localhost:8088`):
 
    ```bash
    dotnet run
    ```
 
-5. Open the Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
+6. Open the Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
 
 ### Deploy to Foundry
 
