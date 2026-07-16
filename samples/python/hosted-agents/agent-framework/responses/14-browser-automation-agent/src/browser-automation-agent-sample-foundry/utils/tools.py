@@ -108,6 +108,7 @@ def make_run_playwright_cli(settings: AgentSettings):
         description=(
             "Run playwright-cli with a named session and return stdout, stderr, and exit code."
         ),
+        approval_mode="never_require",
     )
     async def run_playwright_cli(
         sessionId: Annotated[
@@ -274,6 +275,7 @@ def make_close_browser_session(settings: AgentSettings):
         description=(
             "Close a browser automation session. Detaches playwright-cli and closes the remote browser."
         ),
+        approval_mode="never_require",
     )
     async def close_browser_session(
         sessionId: Annotated[
@@ -330,6 +332,7 @@ def make_get_live_view_url():
             "The URL is delivered directly to the user via the tool output. "
             "Do NOT repeat or retype the URL in your text response."
         ),
+        approval_mode="never_require",
     )
     async def get_live_view_url() -> str:
         if _live_view_url:
