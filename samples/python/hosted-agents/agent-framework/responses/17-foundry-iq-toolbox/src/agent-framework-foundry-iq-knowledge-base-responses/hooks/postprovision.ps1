@@ -56,6 +56,13 @@ Invoke-Checked {
         --audience https://search.azure.com --metadata "ApiType=Azure"
 } "connection create"
 
+Write-Host "Creating the knowledge-base-mcp-local connection..."
+Invoke-Checked {
+    azd ai connection create knowledge-base-mcp-local --kind remote-tool --force `
+        --target $kb --auth-type user-entra-token `
+        --audience https://search.azure.com --metadata "ApiType=Azure"
+} "local connection create"
+
 Write-Host "Creating the knowledge-base toolbox..."
 # Toolbox versions are immutable and 'create' has no upsert flag, so skip it if
 # the toolbox already exists (e.g. on a repeat azd provision). 'toolbox show'
@@ -85,9 +92,34 @@ else {
     }
 }
 
-# The toolbox's unversioned MCP alias is deterministic from the project endpoint.
-$proj = (azd env get-value FOUNDRY_PROJECT_ENDPOINT).TrimEnd('/')
-$toolbox = "$proj/toolboxes/knowledge-base/mcp?api-version=v1"
-Invoke-Checked { azd env set TOOLBOX_ENDPOINT $toolbox } "env set TOOLBOX_ENDPOINT"
+Write-Host "Creating the knowledge-base-local toolbox..."
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+azd ai toolbox show knowledge-base-local *> $null
+$localToolboxExists = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $prevEap
+if ($localToolboxExists) {
+    Write-Host "Toolbox knowledge-base-local already exists; skipping create."
+}
+else {
+    $resolved = (Get-Content ./toolbox.local.yaml -Raw).Replace('${KB_MCP_ENDPOINT}', $kb)
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) "toolbox-local-$([System.Guid]::NewGuid()).yaml"
+    Set-Content -Path $tmp -Value $resolved -NoNewline
+    try {
+        Invoke-Checked { azd ai toolbox create knowledge-base-local --from-file $tmp } "local toolbox create"
+    }
+    finally {
+        Remove-Item $tmp -ErrorAction SilentlyContinue
+    }
+}
 
-Write-Host "Done. TOOLBOX_ENDPOINT = $toolbox"
+# Local runs use the signed-in developer identity. Hosted deployments receive
+# the Agentic Identity toolbox through the azure.yaml environment mapping.
+$proj = (azd env get-value FOUNDRY_PROJECT_ENDPOINT).TrimEnd('/')
+$hostedToolbox = "$proj/toolboxes/knowledge-base/mcp?api-version=v1"
+$localToolbox = "$proj/toolboxes/knowledge-base-local/mcp?api-version=v1"
+Invoke-Checked { azd env set HOSTED_TOOLBOX_ENDPOINT $hostedToolbox } "env set HOSTED_TOOLBOX_ENDPOINT"
+Invoke-Checked { azd env set TOOLBOX_ENDPOINT $localToolbox } "env set TOOLBOX_ENDPOINT"
+
+Write-Host "Done. TOOLBOX_ENDPOINT = $localToolbox"
+Write-Host "Done. HOSTED_TOOLBOX_ENDPOINT = $hostedToolbox"

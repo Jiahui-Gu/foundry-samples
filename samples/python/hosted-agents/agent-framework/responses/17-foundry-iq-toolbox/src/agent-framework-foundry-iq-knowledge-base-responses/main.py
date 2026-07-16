@@ -18,10 +18,10 @@ async def main():
 
     # FoundryToolbox resolves the toolbox endpoint from the environment
     # (TOOLBOX_ENDPOINT, or FOUNDRY_PROJECT_ENDPOINT + TOOLBOX_NAME) and authenticates
-    # every request with the credential. The toolbox proxies the call to the Azure AI
-    # Search knowledge base using the agent's managed identity, which is configured on
-    # the `knowledge-base-mcp` connection in agent.manifest.yaml. The hosting server
-    # enters the agent, which connects the toolbox on first use and closes it at shutdown.
+    # every request with the credential. Local runs use the developer's identity through
+    # knowledge-base-mcp-local; hosted runs use the managed identity through
+    # knowledge-base-mcp. The hosting server enters the agent, which connects the toolbox
+    # on first use and closes it at shutdown.
     toolbox = FoundryToolbox(credential, name="knowledge_base")
 
     client = FoundryChatClient(
