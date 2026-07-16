@@ -32,6 +32,8 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 
 The agent reads a single base prompt from `prompts/base.md`. That prompt contains the browser lifecycle, safety, web extraction, and form-filling guidance used at runtime.
 
+The repository-controlled browser skill is trusted and its read-only `load_skill` operation is configured to run without an approval prompt. This lets the documented one-shot local invocation proceed directly to browser automation; state-changing browser actions remain governed by the base prompt.
+
 See [main.py](src/browser_automation_agent_sample_foundry/main.py) for the full implementation and [docs/sample-structure.md](docs/sample-structure.md) for the design rationale.
 
 ## Repository layout
