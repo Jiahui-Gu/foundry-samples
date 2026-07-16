@@ -20,6 +20,14 @@ from pydantic_ai.ag_ui import handle_ag_ui_request
 
 logger = logging.getLogger(__name__)
 
+has_telemetry_exporter = bool(
+    os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+)
+if not has_telemetry_exporter:
+    # Skip exporter initialization when local telemetry has no destination.
+    logging.basicConfig(level=logging.INFO)
+
 if not os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
     logger.warning(
         "APPLICATIONINSIGHTS_CONNECTION_STRING not set — traces will not be sent to "
@@ -66,7 +74,10 @@ model = OpenAIResponsesModel(
 
 agent = Agent(model, instructions="You are a helpful assistant.")
 
-app = InvocationAgentServerHost()
+if has_telemetry_exporter:
+    app = InvocationAgentServerHost()
+else:
+    app = InvocationAgentServerHost(configure_observability=None)
 
 
 @app.invoke_handler
