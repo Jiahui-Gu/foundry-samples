@@ -3,6 +3,9 @@ azure-ai-projects
 langchain
 langchain-openai
 langchain-mcp-adapters
+# azd allows prereleases to resolve hosting dependencies; keep these APIs stable.
+mcp<2
+pydantic<2.14
 python-dotenv
 
 # debugpy enables local debugging of this agent with the Foundry Toolkit VS Code extension.
