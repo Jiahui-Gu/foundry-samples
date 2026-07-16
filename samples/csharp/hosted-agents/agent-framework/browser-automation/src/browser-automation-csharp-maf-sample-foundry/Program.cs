@@ -20,6 +20,7 @@
  */
 
 using Azure.AI.Projects;
+using Azure.AI.AgentServer.Core;
 using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
@@ -104,6 +105,13 @@ var agent = baseAgent
 // ── Host setup ───────────────────────────────────────────────────────────────
 var builder = AgentHost.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
+
+#pragma warning disable MAAI001
+if (!FoundryEnvironment.IsHosted)
+{
+    builder.Services.AddSingleton<HostedSessionIsolationKeyProvider, LocalHostedSessionIsolationKeyProvider>();
+}
+#pragma warning restore MAAI001
 
 // Register a credential that forces https://ai.azure.com/.default scope for toolbox auth.
 // The framework's FoundryToolboxBearerTokenHandler uses cognitiveservices.azure.com which
