@@ -8,14 +8,14 @@ services:
   ai-project:
     host: azure.ai.project
     deployments:
-      - name: gpt-5.4-mini
+      - name: gpt-5.6-sol
         model:
           format: OpenAI
-          name: gpt-5.4-mini
-          version: '2026-03-17'
+          name: gpt-5.6-sol
+          version: '2026-07-09'
         sku:
           name: GlobalStandard
-          capacity: 10
+          capacity: 1000
   agent-framework-agent-with-remote-mcp-tools-responses:
     host: azure.ai.agent
     metadata:
