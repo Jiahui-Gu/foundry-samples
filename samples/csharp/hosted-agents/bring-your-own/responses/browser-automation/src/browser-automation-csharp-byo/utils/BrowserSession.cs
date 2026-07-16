@@ -108,14 +108,19 @@ public class BrowserSession
     private static string FindCli()
     {
         var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
+        var executableNames = OperatingSystem.IsWindows()
+            ? new[] { "playwright-cli.exe", "playwright-cli.cmd", "playwright-cli" }
+            : new[] { "playwright-cli", "playwright-cli.exe", "playwright-cli.cmd" };
+
         foreach (var dir in pathDirs)
         {
-            var candidate = Path.Combine(dir, "playwright-cli");
-            if (File.Exists(candidate)) return candidate;
-            if (File.Exists(candidate + ".exe")) return candidate + ".exe";
-            if (File.Exists(candidate + ".cmd")) return candidate + ".cmd";
+            foreach (var executableName in executableNames)
+            {
+                var candidate = Path.Combine(dir, executableName);
+                if (File.Exists(candidate)) return candidate;
+            }
         }
-        return "playwright-cli";
+        return OperatingSystem.IsWindows() ? "playwright-cli.cmd" : "playwright-cli";
     }
 
     private static string Truncate(string text, int maxLen = 12000) =>
