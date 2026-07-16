@@ -30,12 +30,34 @@ public class BrowserSession
     public async Task<string> RunCommandAsync(string command, string? cdpUrl = null)
     {
         var cli = FindCli();
-        var args = $"-s={SessionId} {command}";
-        _logger?.LogInformation("[pw-cli] {Cli} -s={SessionId} {Command}", cli, SessionId, Redaction.Redact(command));
+        var executable = cli;
+        var argumentPrefix = string.Empty;
+
+        if (OperatingSystem.IsWindows() && cli.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase))
+        {
+            var cliScript = Path.Combine(
+                Path.GetDirectoryName(cli)!,
+                "node_modules",
+                "@playwright",
+                "cli",
+                "playwright-cli.js");
+            if (!File.Exists(cliScript))
+            {
+                _logger?.LogError("[pw-cli] Could not locate the JavaScript entry point next to {Cli}", cli);
+                return $"Error: Could not locate the playwright-cli entry point next to '{cli}'.";
+            }
+
+            var bundledNode = Path.Combine(Path.GetDirectoryName(cli)!, "node.exe");
+            executable = File.Exists(bundledNode) ? bundledNode : "node";
+            argumentPrefix = $"\"{cliScript}\" ";
+        }
+
+        var args = $"{argumentPrefix}-s={SessionId} {command}";
+        _logger?.LogInformation("[pw-cli] {Cli} -s={SessionId} {Command}", executable, SessionId, Redaction.Redact(command));
 
         ProcessStartInfo psi = new()
         {
-            FileName = cli,
+            FileName = executable,
             Arguments = args,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -100,9 +122,15 @@ public class BrowserSession
         foreach (var dir in pathDirs)
         {
             var candidate = Path.Combine(dir, "playwright-cli");
-            if (File.Exists(candidate)) return candidate;
-            if (File.Exists(candidate + ".exe")) return candidate + ".exe";
-            if (File.Exists(candidate + ".cmd")) return candidate + ".cmd";
+            if (OperatingSystem.IsWindows())
+            {
+                if (File.Exists(candidate + ".exe")) return candidate + ".exe";
+                if (File.Exists(candidate + ".cmd")) return candidate + ".cmd";
+            }
+            else if (File.Exists(candidate))
+            {
+                return candidate;
+            }
         }
         return "playwright-cli";
     }

@@ -46,6 +46,7 @@ See [Program.cs](src/browser-automation-csharp-maf-sample-foundry/Program.cs) fo
 | `utils/Middlewares.cs` | Function invocation middleware (logging + `create_session` interception) and streaming middleware (live view URL injection). |
 | `utils/Tools.cs` | Tool factory methods (`run_playwright_cli`, `close_browser_session`, `get_live_view_url`) and URL storage accessors. |
 | `utils/BrowserSession.cs` | Playwright CLI subprocess runner with redaction and logging. |
+| `utils/LocalHostedSessionIsolationKeyProvider.cs` | Supplies a stable local-only session identity when Foundry platform headers are unavailable. |
 | `utils/ToolboxScopedCredential.cs` | Token credential wrapper that overrides the toolbox auth scope. |
 | `prompts/base.md` | Browser lifecycle, safety, cleanup, web extraction, and form-filling rules. |
 | `skills/azure-playwright-browser-automation/SKILL.md` | Playwright CLI operational reference for remote Azure Playwright Service sessions. |
@@ -166,13 +167,31 @@ In a separate terminal, send a browser-automation request:
 azd ai agent invoke --local --new-session "Open https://example.com and report the page title."
 ```
 
-Or use curl directly:
+Skill loading requires explicit approval. The initial response can therefore contain an
+`mcp_approval_request` for `load_skill` instead of the final browser result. Review the
+request, then continue it by sending an `mcp_approval_response` with the returned response
+and approval IDs:
 
 ```bash
 curl -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
   -d '{"input": "Open https://example.com and report the page title."}'
+
+curl -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "previous_response_id": "RESPONSE_ID",
+    "input": [{
+      "type": "mcp_approval_response",
+      "approval_request_id": "APPROVAL_REQUEST_ID",
+      "approve": true
+    }]
+  }'
 ```
+
+Replace `RESPONSE_ID` with the top-level `id` and `APPROVAL_REQUEST_ID` with the
+`mcp_approval_request.id` from the first response. The continued response runs the approved
+skill and browser tools. Only approve skill requests you recognize.
 
 The server returns a response ID you can use to continue the same conversation and reuse the browser session in later requests:
 
