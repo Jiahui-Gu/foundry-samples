@@ -3,7 +3,7 @@
 requiredVersions:
   extensions:
     azure.ai.agents: '>=1.0.0-beta.4'
-name: browser-automation-csharp-maf-sample-foundry
+name: bat-csharp-maf
 services:
   ai-project:
     host: azure.ai.project
@@ -16,29 +16,10 @@ services:
         sku:
           name: GlobalStandard
           capacity: 10
-  browserautomation:
-    host: azure.ai.connection
-    uses:
-      - ai-project
-    category: PlaywrightWorkspace
-    target: '${PLAYWRIGHT_SERVICE_URL}'
-    authType: ApiKey
-    credentials:
-      key: '${PLAYWRIGHT_SERVICE_ACCESS_TOKEN}'
-    metadata:
-      resourceId: '${PLAYWRIGHT_SERVICE_RESOURCE_ID}'
-  browser-automation-tools:
-    host: azure.ai.toolbox
-    uses:
-      - ai-project
-      - browserautomation
-    tools:
-      - type: browser_automation_preview
-        browser_automation_preview:
-          connection:
-            project_connection_id: '${AZURE_AI_PROJECT_ID}/connections/browserautomation'
-  browser-automation-csharp-maf-sample-foundry:
+  bat-csharp-maf:
     host: azure.ai.agent
+    uses:
+      - ai-project
     metadata:
       tags:
         - Agent Framework
@@ -46,29 +27,43 @@ services:
         - Azure AI AgentServer
         - Responses Protocol
         - Browser Automation
-    project: src/browser-automation-csharp-maf-sample-foundry
+    project: src/bat-csharp-maf
     language: csharp
-    codeConfiguration:
-      runtime: dotnet_10
-      entryPoint: browser-automation.dll
-    uses:
-      - ai-project
-      - browserautomation
-      - browser-automation-tools
+    docker:
+      path: Dockerfile
+      remoteBuild: true
     kind: hosted
-    name: browser-automation-csharp-maf-sample-foundry
-    description: A Foundry-hosted browser automation agent sample for general browsing, web scraping, and form filling.
+    name: bat-csharp-maf
+    displayName: Browser Automation Agent (C#, MAF)
+    description: A Foundry-hosted browser automation agent (C#, MAF) for general browsing, web scraping, and form filling.
     protocols:
       - protocol: responses
         version: 2.0.0
     environmentVariables:
       - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
-        value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+        value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-5.4-mini}
       - name: TOOLBOX_NAME
-        value: ${TOOLBOX_NAME}
+        value: browser-automation-tools
     container:
       resources:
         cpu: '0.5'
         memory: 1Gi
+hooks:
+  postprovision:
+    windows:
+      shell: pwsh
+      run: hooks/postprovision.ps1
+      interactive: true
+    posix:
+      shell: sh
+      run: hooks/postprovision.sh
+      interactive: true
+  postdeploy:
+    windows:
+      shell: pwsh
+      run: hooks/postdeploy.ps1
+    posix:
+      shell: sh
+      run: hooks/postdeploy.sh
 infra:
   provider: microsoft.foundry

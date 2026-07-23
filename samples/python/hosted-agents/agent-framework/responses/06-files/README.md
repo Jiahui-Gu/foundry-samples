@@ -107,6 +107,7 @@ azd ai agent invoke --new-session "Hi!"
 
 1. **VS Code** with the **[Foundry Toolkit](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio)** extension installed.
 2. For debugging Python in VS Code, install the **[Python](https://marketplace.visualstudio.com/items?itemName=ms-python.python)** extension pack.
+3. A Foundry Toolbox must exist in the selected Foundry project. By default, the sample uses a toolbox named `agent-tools` with `code_interpreter` and `web_search` tools.
 
 ### Set up the Python virtual environment
 
@@ -122,6 +123,16 @@ azd ai agent invoke --new-session "Hi!"
   pip install -r requirements.txt
   ```
 
+### Configure the toolbox
+
+Foundry Toolkit creates `src/agent-framework-agent-files-responses/.env` from `.env.example`. The default configuration is:
+
+```dotenv
+TOOLBOX_NAME="agent-tools"
+```
+
+If your toolbox has a different name, update `TOOLBOX_NAME` in that generated `.env` file before running or deploying the agent. The sample loads this file for local debugging, and Foundry Toolkit resolves the `${TOOLBOX_NAME}` placeholder in `azure.yaml` from the same file when deploying.
+
 ### Run and debug the agent
 
 Press **F5** to start the agent. The agent starts and the **Agent Inspector** opens automatically. Chat with the agent in the Inspector.
@@ -134,7 +145,7 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 
 ### Deploy to Foundry
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate settings.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a **Deploy Hosted Agent** wizard and reads `azure.yaml` to auto-populate settings.
 2. If prompted, complete **Foundry Project Setup** to select subscription and project.
 3. On the **Basics** tab, choose deployment method (**Code** or **Container**) and confirm the agent name.
 4. On **Review + Deploy**, confirm runtime details, pick **CPU and Memory** size, and click **Deploy**.
@@ -185,15 +196,15 @@ azd ai agent invoke "Find the quarterly report under the home directory and tell
 
 Similar to using the `azd` CLI, you must invoke the agent first to create a session:
 
-![alt text](./resources/start-a-session.png)
+![alt text](src/agent-framework-agent-files-responses/resources/start-a-session.png)
 
 Once the session is created, you can grab the session ID and use `azd ai agent files upload --session-id <session-id>` to upload files to that specific hosted agent session.
 
-![alt text](./resources/session-started.png)
+![alt text](src/agent-framework-agent-files-responses/resources/session-started.png)
 
 Or you can upload files directly through the Foundry portal by navigating to Files tab in the agent playground:
 
-![alt text](./resources/file-upload-portal.png)
+![alt text](src/agent-framework-agent-files-responses/resources/file-upload-portal.png)
 
 ## Next steps
 
