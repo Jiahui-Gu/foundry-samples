@@ -19,7 +19,7 @@ Each `SKILL.md` includes a unique `*-CANARY-*` token that the model is asked to 
 
 ### Uploading skills with `AIProjectClient`
 
-[`provision_skills.py`](src/agent-framework-agent-foundry-skills-responses/provision_skills.py) walks `skills/*/SKILL.md`, packages each file as an in-memory ZIP (with `SKILL.md` at the archive root), and imports it through [`AIProjectClient.beta.skills.create_from_package`](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/skills?view=foundry&pivots=python#option-2-import-from-a-skillmd-zip). The client is constructed with `allow_preview=True` (Skills is a preview feature) and authenticates with `DefaultAzureCredential`. Existing skills are deleted first via `beta.skills.delete` so the script is safe to re-run after editing a `SKILL.md`, and `beta.skills.list` is called at the end to verify each skill round-trips.
+[`provision_skills.py`](src/agent-framework-agent-foundry-skills-responses/provision_skills.py) walks `skills/*/SKILL.md`, packages each file as an in-memory ZIP (with `SKILL.md` at the archive root), and imports it through [`AIProjectClient.beta.skills.create_from_files`](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/skills?view=foundry&pivots=python#option-2-create-from-a-skillmd-zip). The client is constructed with `allow_preview=True` (Skills is a preview feature) and authenticates with `DefaultAzureCredential`. Existing skills are deleted first via `beta.skills.delete` so the script is safe to re-run after editing a `SKILL.md`, and `beta.skills.list` is called at the end to verify each skill round-trips.
 
 ### Downloading skills at agent startup
 
@@ -28,7 +28,7 @@ Each `SKILL.md` includes a unique `*-CANARY-*` token that the model is asked to 
 A [`SkillsProvider`](../../../../../packages/core/agent_framework/_skills.py) is then built over `downloaded_skills/` and attached to the `Agent` as a context provider. The provider follows the [Agent Skills](https://agentskills.io/) progressive-disclosure pattern:
 
 1. **Advertise** — skill names and descriptions are injected into the system prompt at session start (~100 tokens per skill).
-2. **Load** — the model calls the `load_skill` tool when it decides a skill is relevant to the user's turn, and the full `SKILL.md` body is returned.
+2. **Load** — the model calls the `load_skill` tool when it decides a skill is relevant to the user's turn, and the full `SKILL.md` body is returned. Because these skills contain trusted, instruction-only Markdown, the sample disables approval for this read-only operation so each documented POST completes in one request.
 
 This means the model only pays the token cost for a skill's full body when it actually needs it, and updating a skill in Foundry + restarting the agent is enough to pick up the change — no code redeploy required.
 
@@ -65,9 +65,9 @@ Expected output:
 
 ```text
 Provisioning skill 'escalation-policy' from skills/escalation-policy/SKILL.md...
-  Imported skill 'escalation-policy' (id=skill_..., has_blob=True).
+  Imported skill 'escalation-policy' (id=skill_..., version=1).
 Provisioning skill 'support-style' from skills/support-style/SKILL.md...
-  Imported skill 'support-style' (id=skill_..., has_blob=True).
+  Imported skill 'support-style' (id=skill_..., version=1).
 Done.
 ```
 
