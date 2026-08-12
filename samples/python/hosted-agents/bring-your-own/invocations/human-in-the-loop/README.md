@@ -146,9 +146,42 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 
 ### Or run manually, then open the Inspector
 
-1. Set the required environment variables and sign in to Azure with the Azure CLI (`az login`).
-2. Start the agent: `python main.py` (listens on `http://localhost:8088`).
-3. Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
+1. Create a virtual environment at a short path outside the service source
+   directory, install the dependencies, and sign in with the Azure CLI
+   (`az login`). For example, in PowerShell:
+
+   ```powershell
+   $ServiceDir = Resolve-Path "src\human-in-the-loop-invocations"
+   $VenvPath = "<short-path-to-venv>"
+   py -3.12 -m venv $VenvPath
+   & "$VenvPath\Scripts\python.exe" -m pip install -r "$ServiceDir\requirements.txt"
+   ```
+
+2. Create or select a target-specific `azd` environment for an existing Foundry
+   project and model deployment, then pass those values explicitly to the local
+   process:
+
+   ```powershell
+   $AzdEnvName = "hitl-local"
+   azd env new $AzdEnvName --subscription "<subscription-id>" --location "<location>"
+   azd env set -e $AzdEnvName FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>"
+   azd env set -e $AzdEnvName AZURE_AI_MODEL_DEPLOYMENT_NAME "<model-deployment-name>"
+   azd env get-values -e $AzdEnvName
+
+   $env:FOUNDRY_PROJECT_ENDPOINT = "https://<account>.services.ai.azure.com/api/projects/<project>"
+   $env:AZURE_AI_MODEL_DEPLOYMENT_NAME = "<model-deployment-name>"
+   ```
+
+3. Start the agent on an explicitly selected port:
+
+   ```powershell
+   $Port = 8088
+   & "$VenvPath\Scripts\python.exe" "$ServiceDir\main.py" --port $Port
+   ```
+
+   The agent listens on `http://localhost:$Port`.
+
+4. Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
 
 ### Deploy to Foundry
 

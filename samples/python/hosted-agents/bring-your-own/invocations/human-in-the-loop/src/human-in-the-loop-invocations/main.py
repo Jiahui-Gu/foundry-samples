@@ -60,6 +60,7 @@ Usage::
     curl http://localhost:8088/invocations/<invocation_id>
 """
 
+import argparse
 import asyncio
 import hashlib
 import json
@@ -552,4 +553,12 @@ async def handle_cancel_invocation(request: Request) -> Response:
 
 
 if __name__ == "__main__":
-    app.run()
+    parser = argparse.ArgumentParser(description="Run the human-in-the-loop agent.")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8088,
+        help="Local port to listen on (default: 8088).",
+    )
+    args = parser.parse_args()
+    app.run(port=args.port)
