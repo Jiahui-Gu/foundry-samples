@@ -12,7 +12,7 @@ The agent uses `FoundryChatClient` from the Agent Framework to create a Response
 
 `AzureAISearchContextProvider` runs a search against the configured Azure AI Search index **before each model invocation** and injects the top results into the model context. The agent then composes a grounded answer and cites the source document.
 
-See [main.py](src/agent-framework-agent-azure-search-rag-responses/main.py) for the full implementation.
+See [main.py](src/agent/main.py) for the full implementation.
 
 ### Agent Hosting
 
@@ -38,7 +38,7 @@ The sample assumes the search index already exists and contains documents the ag
 
 ### Option A: Python script (recommended)
 
-[`provision_index.py`](src/agent-framework-agent-azure-search-rag-responses/provision_index.py) creates the index (if it doesn't already exist) and seeds it with the three Contoso Outdoors documents using `DefaultAzureCredential`. Your identity needs the following roles on the **Azure AI Search service** scope:
+[`provision_index.py`](src/agent/provision_index.py) creates the index (if it doesn't already exist) and seeds it with the three Contoso Outdoors documents using `DefaultAzureCredential`. Your identity needs the following roles on the **Azure AI Search service** scope:
 
 - **Search Service Contributor** — to create the index
 - **Search Index Data Contributor** — to upload documents

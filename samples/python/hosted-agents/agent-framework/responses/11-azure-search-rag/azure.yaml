@@ -26,7 +26,7 @@ services:
         - Responses Protocol
         - RAG
         - Azure AI Search
-    project: src/agent-framework-agent-azure-search-rag-responses
+    project: src/agent
     language: python
     codeConfiguration:
       runtime: python_3_13
