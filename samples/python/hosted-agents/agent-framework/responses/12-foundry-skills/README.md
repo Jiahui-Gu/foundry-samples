@@ -19,7 +19,7 @@ Each `SKILL.md` includes a unique `*-CANARY-*` token that the model is asked to 
 
 ### Uploading skills with `AIProjectClient`
 
-[`provision_skills.py`](src/agent-framework-agent-foundry-skills-responses/provision_skills.py) walks `skills/*/SKILL.md`, packages each file as an in-memory ZIP (with `SKILL.md` at the archive root), and imports it through [`AIProjectClient.beta.skills.create_from_package`](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/skills?view=foundry&pivots=python#option-2-import-from-a-skillmd-zip). The client is constructed with `allow_preview=True` (Skills is a preview feature) and authenticates with `DefaultAzureCredential`. Existing skills are deleted first via `beta.skills.delete` so the script is safe to re-run after editing a `SKILL.md`, and `beta.skills.list` is called at the end to verify each skill round-trips.
+[`provision_skills.py`](src/agent-framework-agent-foundry-skills-responses/provision_skills.py) walks `skills/*/SKILL.md`, packages each file as an in-memory ZIP (with `SKILL.md` at the archive root), and imports it through [`AIProjectClient.beta.skills.create_from_files`](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/skills?view=foundry&pivots=python#option-2-import-from-a-skillmd-zip). The client is constructed with `allow_preview=True` (Skills is a preview feature) and authenticates with `DefaultAzureCredential`. Existing skills are deleted first via `beta.skills.delete` so the script is safe to re-run after editing a `SKILL.md`, and `beta.skills.list` is called at the end to verify each skill round-trips.
 
 ### Downloading skills at agent startup
 
@@ -28,7 +28,7 @@ Each `SKILL.md` includes a unique `*-CANARY-*` token that the model is asked to 
 A [`SkillsProvider`](../../../../../packages/core/agent_framework/_skills.py) is then built over `downloaded_skills/` and attached to the `Agent` as a context provider. The provider follows the [Agent Skills](https://agentskills.io/) progressive-disclosure pattern:
 
 1. **Advertise** — skill names and descriptions are injected into the system prompt at session start (~100 tokens per skill).
-2. **Load** — the model calls the `load_skill` tool when it decides a skill is relevant to the user's turn, and the full `SKILL.md` body is returned.
+2. **Load** — the model calls the `load_skill` tool when it decides a skill is relevant to the user's turn, and the full `SKILL.md` body is returned. The sample disables interactive approval for this read-only tool because it loads only the explicitly configured, trusted instruction files downloaded at startup.
 
 This means the model only pays the token cost for a skill's full body when it actually needs it, and updating a skill in Foundry + restarting the agent is enough to pick up the change — no code redeploy required.
 
@@ -45,19 +45,47 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 
 Your identity (or the Managed Identity running the container in production) needs **Azure AI User** on the Foundry project scope. This single role covers both authoring skills with `provision_skills.py` and downloading them from `main.py`.
 
-## Provisioning the skills (one time)
+## Set up the local environment
 
-From this directory, with the venv activated and `az login` done:
+From this sample directory, create the virtual environment next to the agent's
+`requirements.txt` and install its dependencies:
+
+```bash
+cd src/agent-framework-agent-foundry-skills-responses
+python -m venv .venv
+
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+
+# macOS/Linux
+source .venv/bin/activate
+
+python -m pip install uv
+uv pip install -r requirements.txt
+```
+
+Set the Foundry project, model deployment, and skills in the same terminal:
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-python provision_skills.py
+export AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
+export SKILL_NAMES="support-style,escalation-policy"
 ```
 
 Or in PowerShell:
 
 ```powershell
 $env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
+$env:SKILL_NAMES="support-style,escalation-policy"
+```
+
+## Provisioning the skills (one time)
+
+With the service-directory venv activated, the environment variables set, and
+`az login` complete, run:
+
+```bash
 python provision_skills.py
 ```
 
@@ -65,9 +93,9 @@ Expected output:
 
 ```text
 Provisioning skill 'escalation-policy' from skills/escalation-policy/SKILL.md...
-  Imported skill 'escalation-policy' (id=skill_..., has_blob=True).
+  Imported skill 'escalation-policy' (id=skill_..., version=...).
 Provisioning skill 'support-style' from skills/support-style/SKILL.md...
-  Imported skill 'support-style' (id=skill_..., has_blob=True).
+  Imported skill 'support-style' (id=skill_..., version=...).
 Done.
 ```
 
@@ -77,21 +105,19 @@ Re-running the script after editing a `SKILL.md` re-imports the skill, replacing
 
 ## Running the Agent Host
 
-Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
-
-In addition to the standard environment variables, this sample requires:
+Return to the sample directory while keeping the service-directory venv
+activated, then start the agent:
 
 ```bash
-export SKILL_NAMES="support-style,escalation-policy"
+cd ../..
+azd ai agent run
 ```
 
-Or in PowerShell:
-
-```powershell
-$env:SKILL_NAMES="support-style,escalation-policy"
-```
-
-You can also place these in a `.env` file next to `main.py` — see [`.env.example`](src/agent-framework-agent-foundry-skills-responses/.env.example) or `.env`.
+The agent listens on `http://localhost:8088`. For a headless terminal, use
+`azd ai agent run --no-inspector`; use `--port <port>` when port 8088 is
+unavailable. You can also place the required variables in a `.env` file next
+to `main.py`; see
+[`.env.example`](src/agent-framework-agent-foundry-skills-responses/.env.example).
 
 On startup you should see:
 
@@ -150,6 +176,14 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 1. Set the required environment variables and sign in to Azure with the Azure CLI (`az login`).
 2. Start the agent: `python main.py` (listens on `http://localhost:8088`).
 3. Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
+
+## Troubleshooting
+
+**Windows reports `DLL load failed` or `The filename or extension is too
+long`:** Move the checkout to a shorter path, or map the checkout to a drive
+letter, then recreate the service-directory `.venv`. Native dependencies such
+as `cryptography` may otherwise exceed the Windows path limit when loaded from
+a deeply nested checkout.
 
 ## Deploying the Agent to Foundry
 
