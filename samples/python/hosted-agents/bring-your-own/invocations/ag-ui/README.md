@@ -29,6 +29,17 @@ A minimal getting-started agent implementing the [AG-UI protocol](https://docs.a
 
 ### Run the agent locally
 
+Create an `azd` environment and configure it with the existing Foundry project
+and model deployment from the prerequisites:
+
+```bash
+azd env new ag-ui-local
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<model-deployment-name>"
+```
+
+Then start the agent:
+
 ```bash
 azd ai agent run
 ```
@@ -41,12 +52,12 @@ In a separate terminal, invoke the running agent:
 
 **Bash:**
 ```bash
-azd ai agent invoke --local '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello"}], "tools": [], "context": [], "forwardedProps": {}}'
+azd ai agent invoke --local --protocol invocations '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello"}], "tools": [], "context": [], "forwardedProps": {}}'
 ```
 
 **PowerShell:**
 ```powershell
-azd ai agent invoke --local '{\"threadId\": \"thread-1\", \"runId\": \"run-1\", \"state\": {}, \"messages\": [{\"id\": \"msg-1\", \"role\": \"user\", \"content\": \"Hello\"}], \"tools\": [], \"context\": [], \"forwardedProps\": {}}'
+azd ai agent invoke --local --protocol invocations '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello"}], "tools": [], "context": [], "forwardedProps": {}}'
 ```
 
 Or invoke directly with curl:
@@ -83,7 +94,7 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
 ### Invoke the deployed agent
 
 ```bash
-azd ai agent invoke '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello"}], "tools": [], "context": [], "forwardedProps": {}}'
+azd ai agent invoke --protocol invocations '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello"}], "tools": [], "context": [], "forwardedProps": {}}'
 ```
 
 To stream logs from the running agent:
