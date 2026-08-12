@@ -69,6 +69,16 @@ mkdir hosted-langgraph-agent && cd hosted-langgraph-agent
 azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/langgraph/responses/07-human-in-the-loop/azure.yaml
 ```
 
+If you cloned this repository instead, run the sample from this directory and
+bind a dedicated `azd` environment to an existing Foundry project before
+starting the agent:
+
+```bash
+azd env new <environment-name> --subscription <subscription-id>
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<model-deployment-name>"
+```
+
 ### Provision Azure resources (if needed)
 
 If you don't already have a Foundry project and model deployment:
