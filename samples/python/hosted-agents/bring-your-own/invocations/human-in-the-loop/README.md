@@ -40,59 +40,67 @@ GET http://localhost:8088/invocations/docs/openapi.json
 
 - Python 3.10+
 - Azure CLI installed and authenticated (`az login`)
-- Azure OpenAI resource with a deployed model
+- Microsoft Foundry project with a model deployment that supports the Responses API
 
 ### Run the agent locally
 
+Create a dedicated `azd` environment and configure it to use your existing
+Foundry project and model deployment:
+
 ```bash
-azd ai agent run
+azd env new <environment>
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>" --environment <environment>
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<model-deployment-name>" --environment <environment>
+azd ai agent run --environment <environment> --port <port>
 ```
 
-The agent starts on `http://localhost:8088/`.
+The agent starts on `http://localhost:<port>/`. Keep the environment and port
+values consistent when invoking it.
 
 ### Invoke the local agent
 
 **Bash:**
 ```bash
-azd ai agent invoke --local '{"task": "Write a product launch announcement for Azure AI Foundry"}'
+azd ai agent invoke --local --environment <environment> --protocol invocations --port <port> \
+  '{"task": "Write a product launch announcement for Azure AI Foundry"}'
 ```
 
 Or drive the full multi-step approval flow with curl:
 
 ```bash
 # Fetch the OpenAPI spec
-curl http://localhost:8088/invocations/docs/openapi.json
+curl http://localhost:<port>/invocations/docs/openapi.json
 
 # Step 1: Submit a task — agent generates a proposal
-curl -X POST "http://localhost:8088/invocations?agent_session_id=session-1" \
+curl -X POST "http://localhost:<port>/invocations?agent_session_id=session-1" \
   -H "Content-Type: application/json" \
   -d '{"task": "Draft a marketing email for our new AI product launch"}'
 # -> {"status": "awaiting_approval", "proposal": "...", "session_id": "session-1", ...}
 
 # Step 2: Check status (e.g., after reconnecting hours later)
-curl http://localhost:8088/invocations/<invocation_id>
+curl http://localhost:<port>/invocations/<invocation_id>
 # -> {"status": "awaiting_approval", "proposal": "...", ...}
 
 # Step 3a: Approve the proposal
-curl -X POST "http://localhost:8088/invocations?agent_session_id=session-1" \
+curl -X POST "http://localhost:<port>/invocations?agent_session_id=session-1" \
   -H "Content-Type: application/json" \
   -d '{"decision": "approve"}'
 # -> {"status": "completed", "final_output": "...", ...}
 
 # Step 3b: Or request a revision with feedback
-curl -X POST "http://localhost:8088/invocations?agent_session_id=session-1" \
+curl -X POST "http://localhost:<port>/invocations?agent_session_id=session-1" \
   -H "Content-Type: application/json" \
   -d '{"decision": "revise", "feedback": "Make the tone more casual and add a call-to-action"}'
 # -> {"status": "awaiting_approval", "proposal": "<revised draft>", ...}
 
 # Step 3c: Or reject
-curl -X POST "http://localhost:8088/invocations?agent_session_id=session-1" \
+curl -X POST "http://localhost:<port>/invocations?agent_session_id=session-1" \
   -H "Content-Type: application/json" \
   -d '{"decision": "reject"}'
 # -> {"status": "rejected", ...}
 
 # Cancel a pending session
-curl -X POST http://localhost:8088/invocations/<invocation_id>/cancel
+curl -X POST http://localhost:<port>/invocations/<invocation_id>/cancel
 # -> {"status": "cancelled", ...}
 ```
 
@@ -147,7 +155,25 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 ### Or run manually, then open the Inspector
 
 1. Set the required environment variables and sign in to Azure with the Azure CLI (`az login`).
-2. Start the agent: `python main.py` (listens on `http://localhost:8088`).
+   From `src/human-in-the-loop-invocations`, configure the Foundry project,
+   model deployment, and local port:
+
+   **Bash:**
+   ```bash
+   export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
+   export AZURE_AI_MODEL_DEPLOYMENT_NAME="<model-deployment-name>"
+   export PORT="<port>"
+   ```
+
+   **PowerShell:**
+   ```powershell
+   $env:FOUNDRY_PROJECT_ENDPOINT = "https://<account>.services.ai.azure.com/api/projects/<project>"
+   $env:AZURE_AI_MODEL_DEPLOYMENT_NAME = "<model-deployment-name>"
+   $env:PORT = "<port>"
+   ```
+
+2. Start the agent with `python main.py`. It listens on
+   `http://localhost:<port>`.
 3. Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
 
 ### Deploy to Foundry
