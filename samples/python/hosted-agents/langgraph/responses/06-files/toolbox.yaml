@@ -1,0 +1,4 @@
+description: Code interpreter tools for the LangGraph files sample.
+tools:
+  - type: code_interpreter
+    name: code_interpreter

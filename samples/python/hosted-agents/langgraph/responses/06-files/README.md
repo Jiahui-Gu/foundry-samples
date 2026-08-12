@@ -61,6 +61,19 @@ If you don't already have a Foundry project and model deployment, provision them
 azd provision
 ```
 
+If you use an existing Foundry project, configure its endpoint and model deployment in the active `azd` environment:
+
+```bash
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<model-deployment-name>"
+```
+
+The agent expects a toolbox named `agent-tools`. If that toolbox does not already exist in the project, create it from the sample's definition:
+
+```bash
+azd ai toolbox create agent-tools --from-file toolbox.yaml
+```
+
 ### Run the agent locally
 
 ```bash
