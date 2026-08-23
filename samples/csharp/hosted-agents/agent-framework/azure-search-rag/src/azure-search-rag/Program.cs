@@ -2,6 +2,8 @@
 
 using Azure;
 using Azure.AI.AgentServer.Core;
+using Azure.AI.AgentServer.Responses;
+using Azure.AI.AgentServer.Responses.Models;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Azure.Search.Documents;
@@ -48,6 +50,16 @@ AIAgent agent = new AIProjectClient(projectEndpoint, credential)
     });
 
 var builder = AgentHost.CreateBuilder(args);
+
+// The pinned Microsoft.Agents.AI.Foundry.Hosting preview used here throws a 500 whenever the
+// default HostedSessionIsolationKeyProvider resolves no x-agent-user-id (always true for local
+// runs, since only the Foundry platform sends that header). Register a fallback provider so
+// `azd ai agent run` / `azd ai agent invoke --local` and direct curl calls work locally, while
+// still preferring the real platform-supplied user id when the agent is actually hosted.
+#pragma warning disable MAAI001 // Foundry hosting APIs are experimental
+builder.Services.AddSingleton<HostedSessionIsolationKeyProvider, LocalDevSessionIsolationKeyProvider>();
+#pragma warning restore MAAI001
+
 builder.Services.AddFoundryResponses(agent);
 builder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
 
@@ -79,3 +91,23 @@ static Func<string, CancellationToken, Task<IEnumerable<TextSearchProvider.TextS
 
         return results;
     };
+
+#pragma warning disable MAAI001 // Foundry hosting APIs are experimental
+// Falls back to a fixed local development user id when the platform-injected x-agent-user-id
+// header is absent (i.e., when running outside Foundry hosting), instead of returning null and
+// causing the hosting layer to reject the request.
+sealed class LocalDevSessionIsolationKeyProvider : HostedSessionIsolationKeyProvider
+{
+    private const string LocalDevUserId = "local-dev-user";
+
+    public override ValueTask<HostedSessionContext?> GetKeysAsync(
+        ResponseContext context,
+        CreateResponse request,
+        CancellationToken cancellationToken)
+    {
+        var userKey = context?.PlatformContext?.UserIdKey;
+        return new ValueTask<HostedSessionContext?>(
+            new HostedSessionContext(string.IsNullOrWhiteSpace(userKey) ? LocalDevUserId : userKey!));
+    }
+}
+#pragma warning restore MAAI001
