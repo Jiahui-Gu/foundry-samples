@@ -41,7 +41,9 @@ For (2) and (3), the agent downloads the blob (truncated to 64 KiB), summarizes 
 
 In addition to the prerequisites listed in the [parent README](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/README.md), this sample requires:
 
+- An existing **Foundry project** with a model deployment.
 - An **Azure Storage account** with two existing containers: one for **inputs** (the Event Grid subscription watches this one) and a separate one for **summaries** the agent writes back. The two must be distinct so writes to the summary container don't re-trigger the agent.
+- For local runs, your signed-in developer identity needs **Foundry User** on the Foundry project, **Storage Blob Data Reader** on the input container, and **Storage Blob Data Contributor** on the summary container.
 
 Set the following shell variables — the rest of the commands below assume them.
 
@@ -54,6 +56,8 @@ INPUT_CONTAINER="<your-input-container>"
 SUMMARY_CONTAINER="<your-summary-container>"
 FOUNDRY_ACCOUNT_NAME="<your-foundry-account-name>"
 FOUNDRY_PROJECT_NAME="<your-foundry-project-name>"
+FOUNDRY_PROJECT_ENDPOINT="https://${FOUNDRY_ACCOUNT_NAME}.services.ai.azure.com/api/projects/${FOUNDRY_PROJECT_NAME}"
+AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
 ```
 
 PowerShell:
@@ -65,6 +69,126 @@ $INPUT_CONTAINER = "<your-input-container>"
 $SUMMARY_CONTAINER = "<your-summary-container>"
 $FOUNDRY_ACCOUNT_NAME = "<your-foundry-account-name>"
 $FOUNDRY_PROJECT_NAME = "<your-foundry-project-name>"
+$FOUNDRY_PROJECT_ENDPOINT = "https://${FOUNDRY_ACCOUNT_NAME}.services.ai.azure.com/api/projects/$FOUNDRY_PROJECT_NAME"
+$AZURE_AI_MODEL_DEPLOYMENT_NAME = "<your-model-deployment-name>"
+```
+
+## Run and verify locally with existing resources
+
+The local agent uses your developer credential instead of a deployed agent
+identity. Sign in with `az login`, then create a dedicated `azd` environment
+from this sample directory and store the local settings in it.
+
+Bash:
+
+```bash
+LOCAL_ENV="event-grid-trigger-local"
+azd env new "$LOCAL_ENV"
+azd env set FOUNDRY_PROJECT_ENDPOINT "$FOUNDRY_PROJECT_ENDPOINT" -e "$LOCAL_ENV"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "$AZURE_AI_MODEL_DEPLOYMENT_NAME" -e "$LOCAL_ENV"
+azd env set AZURE_STORAGE_ACCOUNT_NAME "$AZURE_STORAGE_ACCOUNT_NAME" -e "$LOCAL_ENV"
+azd env set AZURE_STORAGE_SUMMARY_CONTAINER_NAME "$SUMMARY_CONTAINER" -e "$LOCAL_ENV"
+```
+
+PowerShell:
+
+```powershell
+$LOCAL_ENV = "event-grid-trigger-local"
+azd env new $LOCAL_ENV
+azd env set FOUNDRY_PROJECT_ENDPOINT $FOUNDRY_PROJECT_ENDPOINT -e $LOCAL_ENV
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME $AZURE_AI_MODEL_DEPLOYMENT_NAME -e $LOCAL_ENV
+azd env set AZURE_STORAGE_ACCOUNT_NAME $AZURE_STORAGE_ACCOUNT_NAME -e $LOCAL_ENV
+azd env set AZURE_STORAGE_SUMMARY_CONTAINER_NAME $SUMMARY_CONTAINER -e $LOCAL_ENV
+```
+
+Start the agent in the first terminal:
+
+```bash
+azd ai agent run --port 8088 --no-client -e "$LOCAL_ENV"
+```
+
+```powershell
+azd ai agent run --port 8088 --no-client -e $LOCAL_ENV
+```
+
+Upload a representative input blob from a second terminal.
+
+Bash:
+
+```bash
+printf '%s\n' \
+  "Hosted agents process Event Grid blob-created events end to end via system-assigned MI delivery." \
+  > hello-local.txt
+az storage blob upload \
+  --account-name "$AZURE_STORAGE_ACCOUNT_NAME" \
+  -c "$INPUT_CONTAINER" -f hello-local.txt -n hello-local.txt \
+  --auth-mode login --overwrite
+```
+
+PowerShell:
+
+```powershell
+"Hosted agents process Event Grid blob-created events end to end via system-assigned MI delivery." |
+  Set-Content hello-local.txt
+az storage blob upload `
+  --account-name $AZURE_STORAGE_ACCOUNT_NAME `
+  -c $INPUT_CONTAINER -f hello-local.txt -n hello-local.txt `
+  --auth-mode login --overwrite
+```
+
+Create the direct invocation body and send it to the local endpoint.
+
+Bash:
+
+```bash
+printf '{"container":"%s","name":"hello-local.txt"}\n' "$INPUT_CONTAINER" > local-request.json
+azd ai agent invoke --local --port 8088 --protocol invocations \
+  --input-file local-request.json -e "$LOCAL_ENV"
+```
+
+PowerShell:
+
+```powershell
+@{ container = $INPUT_CONTAINER; name = "hello-local.txt" } |
+  ConvertTo-Json -Compress |
+  Set-Content local-request.json
+azd ai agent invoke --local --port 8088 --protocol invocations `
+  --input-file local-request.json -e $LOCAL_ENV
+```
+
+A successful response identifies both blobs and contains a non-empty summary:
+
+```json
+{
+  "input": "<input-container>/hello-local.txt",
+  "output": "<summary-container>/hello-local.txt.summary.json",
+  "elapsed_ms": 842,
+  "truncated": false,
+  "summary": "- Hosted agents ...\n- ..."
+}
+```
+
+The output is also persisted in the summary container. Download it to verify
+the complete local workflow:
+
+Bash:
+
+```bash
+az storage blob download \
+  --account-name "$AZURE_STORAGE_ACCOUNT_NAME" \
+  -c "$SUMMARY_CONTAINER" -n hello-local.txt.summary.json \
+  --auth-mode login -f hello-local.txt.summary.json
+cat hello-local.txt.summary.json
+```
+
+PowerShell:
+
+```powershell
+az storage blob download `
+  --account-name $AZURE_STORAGE_ACCOUNT_NAME `
+  -c $SUMMARY_CONTAINER -n hello-local.txt.summary.json `
+  --auth-mode login -f hello-local.txt.summary.json
+Get-Content hello-local.txt.summary.json -Raw
 ```
 
 ## 1. Deploy the agent
