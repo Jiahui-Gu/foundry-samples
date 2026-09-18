@@ -11,6 +11,8 @@
 
 #pragma warning disable MAAI001 // Microsoft.Agents.AI.Foundry experimental APIs (FoundryMemoryProvider, FoundryMemoryProviderScope)
 
+using Azure.AI.AgentServer.Responses;
+using Azure.AI.AgentServer.Responses.Models;
 using Azure.AI.Projects;
 using Azure.Identity;
 using DotNetEnv;
@@ -62,8 +64,32 @@ var agent = projectClient.AsAIAgent(new ChatClientAgentOptions
 });
 
 var builder = AgentHost.CreateBuilder(args);
+
+// The hosting SDK resolves per-request identity via HostedSessionIsolationKeyProvider. In a
+// production Foundry container the platform injects the x-agent-user-id header and the built-in
+// provider maps it automatically. Outside the platform (azd ai agent run / dotnet run) that header
+// is absent, and the default provider returns null, which the SDK treats as a configuration error
+// (HTTP 500) on every request, including `azd ai agent invoke --local`. Registering a fallback
+// provider here keeps production behavior intact (the platform header still wins when present)
+// while letting local development sessions work out of the box.
+builder.Services.AddSingleton<HostedSessionIsolationKeyProvider, LocalDevHostedSessionIsolationKeyProvider>();
+
 builder.Services.AddFoundryResponses(agent);
 builder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
 
 var app = builder.Build();
 app.Run();
+
+#pragma warning disable MAAI001 // Microsoft.Agents.AI.Foundry experimental APIs (HostedSessionIsolationKeyProvider, HostedSessionContext)
+sealed class LocalDevHostedSessionIsolationKeyProvider : HostedSessionIsolationKeyProvider
+{
+    private const string LocalDevUserId = "foundry-memory-rag-local-dev-user";
+
+    public override ValueTask<HostedSessionContext?> GetKeysAsync(ResponseContext context, CreateResponse request, CancellationToken cancellationToken)
+    {
+        var platformUserId = context?.PlatformContext?.UserIdKey;
+        var userId = string.IsNullOrWhiteSpace(platformUserId) ? LocalDevUserId : platformUserId;
+        return new ValueTask<HostedSessionContext?>(new HostedSessionContext(userId));
+    }
+}
+#pragma warning restore MAAI001
