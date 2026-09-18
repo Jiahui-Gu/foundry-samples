@@ -44,8 +44,10 @@ if not _deployment:
         "Set it to your model deployment name as declared in agent.manifest.yaml."
     )
 
-# Azure OpenAI via managed identity (DefaultAzureCredential)
-_credential = DefaultAzureCredential()
+# Azure OpenAI via managed identity (DefaultAzureCredential).
+# Local CLI credentials can exceed the default 10-second subprocess timeout on
+# their first invocation while hosted managed identity authentication is unaffected.
+_credential = DefaultAzureCredential(process_timeout=30)
 _token_provider = get_bearer_token_provider(
     _credential, "https://ai.azure.com/.default")
 
