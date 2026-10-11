@@ -19,7 +19,7 @@ Each `SKILL.md` includes a unique `*-CANARY-*` token that the model is asked to 
 
 ### Uploading skills with `AIProjectClient`
 
-[`provision_skills.py`](src/agent-framework-agent-foundry-skills-responses/provision_skills.py) walks `skills/*/SKILL.md`, packages each file as an in-memory ZIP (with `SKILL.md` at the archive root), and imports it through [`AIProjectClient.beta.skills.create_from_package`](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/skills?view=foundry&pivots=python#option-2-import-from-a-skillmd-zip). The client is constructed with `allow_preview=True` (Skills is a preview feature) and authenticates with `DefaultAzureCredential`. Existing skills are deleted first via `beta.skills.delete` so the script is safe to re-run after editing a `SKILL.md`, and `beta.skills.list` is called at the end to verify each skill round-trips.
+[`provision_skills.py`](src/agent-framework-agent-foundry-skills-responses/provision_skills.py) walks `skills/*/SKILL.md`, packages each file as an in-memory ZIP (with `SKILL.md` at the archive root), and imports it through [`AIProjectClient.beta.skills.create_from_files`](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/skills?view=foundry&pivots=python#option-2-import-from-a-skillmd-zip) as a multipart ZIP upload. The client is constructed with `allow_preview=True` (Skills is a preview feature) and authenticates with `DefaultAzureCredential`. Existing skills are deleted first via `beta.skills.delete` so the script is safe to re-run after editing a `SKILL.md`, and `beta.skills.list` is called at the end to verify each skill round-trips.
 
 ### Downloading skills at agent startup
 
@@ -65,9 +65,9 @@ Expected output:
 
 ```text
 Provisioning skill 'escalation-policy' from skills/escalation-policy/SKILL.md...
-  Imported skill 'escalation-policy' (id=skill_..., has_blob=True).
+  Imported skill 'escalation-policy' (skill_id=skill_..., version=1).
 Provisioning skill 'support-style' from skills/support-style/SKILL.md...
-  Imported skill 'support-style' (id=skill_..., has_blob=True).
+  Imported skill 'support-style' (skill_id=skill_..., version=1).
 Done.
 ```
 

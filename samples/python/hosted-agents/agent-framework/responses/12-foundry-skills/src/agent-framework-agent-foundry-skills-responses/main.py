@@ -114,7 +114,13 @@ async def main() -> None:
         # tool the model uses to retrieve the full SKILL.md body on demand. No
         # script_runner is configured because the skills in this sample are
         # instruction-only.
-        skills_provider = SkillsProvider.from_paths(skill_paths=str(DOWNLOADED_SKILLS_DIR))
+        # Skills are downloaded from our own Foundry project (authored in skills/,
+        # provisioned by provision_skills.py), so they're trusted first-party content.
+        # Disable the default always-require approval for load_skill so the agent can
+        # respond in a single turn instead of pausing on an mcp_approval_request.
+        skills_provider = SkillsProvider.from_paths(
+            skill_paths=str(DOWNLOADED_SKILLS_DIR), disable_load_skill_approval=True
+        )
         context_providers.append(skills_provider)
 
     async with DefaultAzureCredential() as credential:
