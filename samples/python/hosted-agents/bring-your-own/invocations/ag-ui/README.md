@@ -26,6 +26,24 @@ A minimal getting-started agent implementing the [AG-UI protocol](https://docs.a
 
 - Python 3.10+
 - A Foundry project with a deployed model
+- Azure CLI authentication (`az login`) for `DefaultAzureCredential`
+
+### Configure the local azd environment
+
+`azd ai agent run` reads the Foundry project and model from the active azd
+environment. Create a local environment (or select an existing one), then set
+the endpoint and deployment name for your existing resources:
+
+```bash
+azd env new <environment-name>
+# For an existing environment, use: azd env select <environment-name>
+
+azd env set FOUNDRY_PROJECT_ENDPOINT "https://<account>.services.ai.azure.com/api/projects/<project>"
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME "<model-deployment-name>"
+```
+
+Copy the project endpoint from the Foundry portal and use a model deployment
+that exists in that project.
 
 ### Run the agent locally
 
@@ -46,7 +64,7 @@ azd ai agent invoke --local '{"threadId": "thread-1", "runId": "run-1", "state":
 
 **PowerShell:**
 ```powershell
-azd ai agent invoke --local '{\"threadId\": \"thread-1\", \"runId\": \"run-1\", \"state\": {}, \"messages\": [{\"id\": \"msg-1\", \"role\": \"user\", \"content\": \"Hello\"}], \"tools\": [], \"context\": [], \"forwardedProps\": {}}'
+azd ai agent invoke --local '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello"}], "tools": [], "context": [], "forwardedProps": {}}'
 ```
 
 Or invoke directly with curl:
