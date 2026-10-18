@@ -36,6 +36,10 @@ An `AgentSkillsProvider` is then built over `downloaded_skills/` and attached to
 
 The model only pays the token cost for a skill's full body when it actually needs it, and updating a skill in Foundry plus restarting the agent is enough to pick up the change — no code redeploy required.
 
+The agent automatically approves only the read-only skill tools (`load_skill` and
+`read_skill_resource`) so a hosted request can finish without an interactive approval
+handoff. Script execution remains approval-gated.
+
 > **Note:** This sample supports instruction-only skills. If your downloaded skills contain resource files or scripts, configure the corresponding readers when constructing the `AgentSkillsProvider`.
 
 ### Agent Hosting
@@ -127,7 +131,7 @@ Downloading skill 'escalation-policy' from Foundry...
 In a separate terminal, invoke the running agent:
 
 ```bash
-azd ai agent invoke --local "Hi, I am Alex. Can I return my tent within 30 days?"
+azd ai agent invoke --local --user-identity local-user "Hi, I am Alex. Can I return my tent within 30 days?"
 ```
 
 Or use curl directly:
@@ -135,8 +139,12 @@ Or use curl directly:
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
+  -H "x-agent-user-id: local-user" \
   -d '{"input": "Hi, I am Alex. Can I return my tent within 30 days?", "stream": false}' | jq .
 ```
+
+Local Responses hosting uses the user identity to isolate session state. Keep the same
+non-sensitive identity value across requests that should share a session.
 
 | Prompt mentions | Skill that should drive the response |
 |---|---|
