@@ -122,7 +122,7 @@ if (requestedSkills.Length > 0)
     skillsProvider = new AgentSkillsProvider(downloadedSkillsDir);
 }
 
-ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
+AIAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
 {
     Name = "agent-skills",
     Description = "Customer-support agent that loads tone and escalation policy from Foundry Skills.",
@@ -132,7 +132,13 @@ ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
         Instructions = "You are a customer-support assistant for Contoso Outdoors.",
     },
     AIContextProviders = skillsProvider is null ? [] : [skillsProvider],
-});
+})
+.AsBuilder()
+.UseToolApproval(new ToolApprovalAgentOptions
+{
+    AutoApprovalRules = [AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule],
+})
+.Build();
 
 var builder = AgentHost.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
