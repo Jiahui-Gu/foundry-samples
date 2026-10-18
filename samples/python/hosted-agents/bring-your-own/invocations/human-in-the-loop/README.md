@@ -146,9 +146,25 @@ Press **F5** to start the agent. The agent starts and the **Agent Inspector** op
 
 ### Or run manually, then open the Inspector
 
-1. Set the required environment variables and sign in to Azure with the Azure CLI (`az login`).
-2. Start the agent: `python main.py` (listens on `http://localhost:8088`).
-3. Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test.
+1. Sign in to Azure with the Azure CLI (`az login`).
+2. Set the Foundry project endpoint and model deployment name:
+
+   **Bash:**
+
+   ```bash
+   export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
+   export AZURE_AI_MODEL_DEPLOYMENT_NAME="<model-deployment-name>"
+   ```
+
+   **PowerShell:**
+
+   ```powershell
+   $env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
+   $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="<model-deployment-name>"
+   ```
+
+3. Start the agent: `python main.py` (listens on `http://localhost:8088`).
+4. Command Palette (`Ctrl+Shift+P`) → **Foundry Toolkit: Open Agent Inspector**, then send a message to test. You can also use the curl approval flow in [Invoke the local agent](#invoke-the-local-agent).
 
 ### Deploy to Foundry
 
@@ -196,3 +212,11 @@ az role assignment create \
 ```
 
 > **Note:** It may take a few minutes for role assignments to propagate. Retry the request after waiting.
+
+### Azure CLI credential unavailable with `azd ai agent run`
+
+If a local invocation reports that `DefaultAzureCredential` could not invoke the
+Azure CLI even though `az login` succeeds in your terminal, stop the `azd`
+process and use the [manual local run](#or-run-manually-then-open-the-inspector)
+from that authenticated terminal. This keeps Azure CLI credential discovery in
+the same shell environment as the Python process.
