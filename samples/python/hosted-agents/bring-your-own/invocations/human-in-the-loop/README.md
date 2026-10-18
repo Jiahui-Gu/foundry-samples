@@ -42,10 +42,25 @@ GET http://localhost:8088/invocations/docs/openapi.json
 - Azure CLI installed and authenticated (`az login`)
 - Azure OpenAI resource with a deployed model
 
+### Configure an existing Foundry project
+
+Create a local `azd` environment and set the endpoint and model deployment that
+the agent should use:
+
+```bash
+azd env new <environment-name>
+azd env set \
+  FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>" \
+  AZURE_AI_MODEL_DEPLOYMENT_NAME="<model-deployment-name>"
+```
+
+You can copy the project endpoint from the Foundry portal. The signed-in identity
+must have access to invoke the model deployment in that project.
+
 ### Run the agent locally
 
 ```bash
-azd ai agent run
+azd ai agent run --environment <environment-name>
 ```
 
 The agent starts on `http://localhost:8088/`.
