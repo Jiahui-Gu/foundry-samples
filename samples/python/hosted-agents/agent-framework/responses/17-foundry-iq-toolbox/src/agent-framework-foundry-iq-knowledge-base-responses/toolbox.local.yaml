@@ -1,0 +1,8 @@
+description: Foundry IQ knowledge base for local development
+tools:
+  - type: mcp
+    name: knowledge_base
+    server_label: knowledge_base
+    server_url: ${KB_MCP_ENDPOINT}
+    project_connection_id: knowledge-base-mcp-local
+    require_approval: never
