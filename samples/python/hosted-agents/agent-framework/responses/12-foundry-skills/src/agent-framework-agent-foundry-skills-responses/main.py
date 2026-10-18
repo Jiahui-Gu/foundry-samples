@@ -114,7 +114,10 @@ async def main() -> None:
         # tool the model uses to retrieve the full SKILL.md body on demand. No
         # script_runner is configured because the skills in this sample are
         # instruction-only.
-        skills_provider = SkillsProvider.from_paths(skill_paths=str(DOWNLOADED_SKILLS_DIR))
+        skills_provider = SkillsProvider.from_paths(
+            skill_paths=str(DOWNLOADED_SKILLS_DIR),
+            disable_load_skill_approval=True,
+        )
         context_providers.append(skills_provider)
 
     async with DefaultAzureCredential() as credential:
