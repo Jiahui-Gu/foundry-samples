@@ -55,14 +55,12 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-_model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT", "")
+_model = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "")
 _storage_account = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME", "")
 _summary_container = os.environ.get("AZURE_STORAGE_SUMMARY_CONTAINER_NAME", "")
 
 _credential = DefaultAzureCredential()
-_project_client = AIProjectClient(endpoint=_endpoint, credential=_credential)
-_openai_client = _project_client.get_openai_client()
 
 _MAX_BLOB_BYTES = 64 * 1024
 _ALLOWED_EXTENSIONS = (".txt", ".md")
@@ -194,16 +192,22 @@ async def handle_invoke(request: Request):
             {"skipped": True, "reason": f"extension not in {_ALLOWED_EXTENSIONS}"}
         )
 
-    if not _storage_account or not _summary_container:
+    if not _endpoint or not _model or not _storage_account or not _summary_container:
         return JSONResponse(
             status_code=500,
             content={
                 "error": "missing_configuration",
-                "message": "AZURE_STORAGE_ACCOUNT_NAME and AZURE_STORAGE_SUMMARY_CONTAINER_NAME must be set",
+                "message": (
+                    "FOUNDRY_PROJECT_ENDPOINT, AZURE_AI_MODEL_DEPLOYMENT_NAME, "
+                    "AZURE_STORAGE_ACCOUNT_NAME, and "
+                    "AZURE_STORAGE_SUMMARY_CONTAINER_NAME must be set"
+                ),
             },
         )
 
     account_url = f"https://{_storage_account}.blob.core.windows.net"
+    project_client = AIProjectClient(endpoint=_endpoint, credential=_credential)
+    openai_client = project_client.get_openai_client()
 
     async with BlobClient(account_url, container, blob_name, credential=_credential) as src:
         downloader = await src.download_blob(max_concurrency=1)
@@ -212,7 +216,7 @@ async def handle_invoke(request: Request):
     text = truncated.decode("utf-8", errors="replace")
 
     started = time.monotonic()
-    response = await _openai_client.responses.create(
+    response = await openai_client.responses.create(
         model=_model,
         instructions="You summarize files in 3-5 concise bullet points.",
         input=[

@@ -67,6 +67,37 @@ $FOUNDRY_ACCOUNT_NAME = "<your-foundry-account-name>"
 $FOUNDRY_PROJECT_NAME = "<your-foundry-project-name>"
 ```
 
+## Run locally
+
+The Event Grid subscription-validation path can be tested locally before
+configuring Storage or a Foundry model. Create a dedicated `azd` environment,
+start the agent, and keep the process running:
+
+```powershell
+$AZD_ENV = "event-grid-trigger-local"
+$PORT = 8088 # Choose an available loopback port.
+
+azd env new $AZD_ENV
+azd ai agent run --environment $AZD_ENV --port $PORT --no-client
+```
+
+In a second terminal, invoke the local Invocations endpoint with the included
+representative Event Grid `SubscriptionValidationEvent`:
+
+```powershell
+azd ai agent invoke --local --protocol invocations `
+  --environment $AZD_ENV --port $PORT `
+  --input-file validation-event.json
+```
+
+The response is `{"validationResponse":"local-validation-code"}`. This verifies
+the same validation handshake Event Grid performs while creating the event
+subscription. Stop the local agent with `Ctrl+C` when finished.
+
+Processing a `BlobCreated` event additionally requires the Storage and Foundry
+configuration described below because it downloads, summarizes, and writes a
+real blob.
+
 ## 1. Deploy the agent
 
 [azure.yaml](azure.yaml) declares two environment variables and binds each value to an `${...}` placeholder that `azd` resolves from the **azd environment** at deploy time (your shell's `export` / `$env:` values are not propagated to the deployed agent). Set them once with `azd env set` before deploying:

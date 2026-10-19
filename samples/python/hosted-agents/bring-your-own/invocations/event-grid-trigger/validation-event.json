@@ -1,0 +1,15 @@
+[
+  {
+    "id": "local-validation-event",
+    "eventType": "Microsoft.EventGrid.SubscriptionValidationEvent",
+    "subject": "",
+    "eventTime": "2026-01-01T00:00:00Z",
+    "data": {
+      "validationCode": "local-validation-code",
+      "validationUrl": "https://example.invalid/validation"
+    },
+    "dataVersion": "1",
+    "metadataVersion": "1",
+    "topic": "/subscriptions/local/resourceGroups/local/providers/Microsoft.Storage/storageAccounts/local"
+  }
+]
