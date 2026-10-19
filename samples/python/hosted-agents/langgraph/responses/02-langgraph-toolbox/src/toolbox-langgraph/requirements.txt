@@ -3,6 +3,10 @@ azure-ai-projects
 langchain
 langchain-openai
 langchain-mcp-adapters
+# MCP 2 removes the RequestContext API used by langchain-mcp-adapters.
+mcp<2
+# MCP 1.x does not initialize with the Pydantic 2.14 prerelease API.
+pydantic<2.14
 python-dotenv
 
 # debugpy enables local debugging of this agent with the Foundry Toolkit VS Code extension.
